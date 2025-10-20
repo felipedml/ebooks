@@ -1,0 +1,44 @@
+# Arquivo de exemplo de variáveis de ambiente
+# Copie este arquivo para .env.local e preencha com suas chaves reais
+
+# AI Providers API Keys (Fallback se não configurar no banco)
+OPENAI_API_KEY=sk-your-openai-api-key-here
+GOOGLE_API_KEY=your-google-gemini-api-key-here
+# Alternative name for Google API Key (also supported):
+# GEMINI_API_KEY=your-google-gemini-api-key-here
+
+# Encryption Key (Para encriptar API keys no banco - TROQUE EM PRODUÇÃO!)
+ENCRYPTION_KEY=your-32-byte-encryption-key-here-change-in-production
+
+# Database Configuration
+# For LOCAL development: leave commented to use local SQLite (file:sqlite.db)
+# For PRODUCTION (Netlify): configure these in Netlify dashboard
+# Use Turso for remote database: https://turso.tech
+# TURSO_DATABASE_URL=libsql://your-database.turso.io
+# TURSO_AUTH_TOKEN=your-auth-token-here
+
+# Alternative names (also supported):
+# DATABASE_URL=libsql://your-database.turso.io
+# DATABASE_AUTH_TOKEN=your-auth-token-here
+
+# Inngest Configuration
+# Get these from https://app.inngest.com
+INNGEST_EVENT_KEY=your-inngest-event-key
+INNGEST_SIGNING_KEY=signkey-prod-xxxxx
+
+# Canva OAuth Configuration
+# Get credentials from https://www.canva.com/developers/
+CANVA_CLIENT_ID=your-canva-client-id
+CANVA_CLIENT_SECRET=your-canva-client-secret
+# Note: Redirect URI is /canva-callback - Add this to Canva Dashboard:
+# Development: http://localhost:3000/canva-callback
+# Production: https://your-domain.com/canva-callback
+
+# Application settings
+APP_NAME=Geração Livros Automação
+APP_URL=http://127.0.0.1:3000
+# IMPORTANTE: Use 127.0.0.1 (não localhost) para OAuth funcionar
+NEXT_PUBLIC_BASE_URL=http://127.0.0.1:3000
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_TEMPERATURE=0.7
+NODE_ENV=development

@@ -1,0 +1,197 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { db } from '@/lib/db';
+import { steps } from '@/lib/db/schema';
+
+export async function GET(request: NextRequest) {
+  try {
+    const url = new URL(request.url);
+    const fluxoId = url.searchParams.get('fluxoId');
+    
+    if (!fluxoId) {
+      return NextResponse.json(
+        { error: 'fluxoId é obrigatório' },
+        { status: 400 }
+      );
+    }
+
+    // Usar SQL simples para evitar problemas com importações
+    const stepsFluxo = await db.all(`
+      SELECT * FROM steps 
+      WHERE fluxo_id = ? 
+      ORDER BY ordem ASC
+    `, [parseInt(fluxoId)]);
+
+    return NextResponse.json({ 
+      success: true, 
+      steps: stepsFluxo 
+    });
+  } catch (error) {
+    console.error('Erro ao buscar steps:', error);
+    return NextResponse.json(
+      { error: 'Erro interno do servidor' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { fluxoId, ordem, tipo, conteudo, condicoes, proximoStep, ativo } = body;
+    
+    if (!fluxoId || !tipo || !conteudo) {
+      return NextResponse.json(
+        { error: 'fluxoId, tipo e conteudo são obrigatórios' },
+        { status: 400 }
+      );
+    }
+
+    // Se não especificou ordem, colocar no final
+    let ordemFinal = ordem;
+    if (ordemFinal === undefined) {
+      const ultimoStep = await db.select()
+        .from(steps)
+        .where(eq(steps.fluxoId, parseInt(fluxoId)))
+        .orderBy(desc(steps.ordem))
+        .limit(1);
+
+      ordemFinal = ultimoStep.length > 0 ? (ultimoStep[0].ordem ?? 0) + 1 : 0;
+    }
+
+    const [novoStep] = await db.insert(steps).values({
+      fluxoId: parseInt(fluxoId),
+      ordem: ordemFinal,
+      tipo,
+      conteudo: typeof conteudo === 'string' ? conteudo : JSON.stringify(conteudo),
+      condicoes: condicoes ? (typeof condicoes === 'string' ? condicoes : JSON.stringify(condicoes)) : null,
+      proximoStep: proximoStep || null,
+      ativo: ativo ?? true,
+    }).returning();
+
+    return NextResponse.json({ 
+      success: true, 
+      step: novoStep,
+      message: 'Step criado com sucesso!' 
+    });
+
+  } catch (error) {
+    console.error('Erro ao criar step:', error);
+    return NextResponse.json(
+      { error: 'Erro interno do servidor' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { id, ordem, tipo, conteudo, condicoes, proximoStep, ativo, move, fluxoId } = body;
+    
+    if (!id) {
+      return NextResponse.json(
+        { error: 'ID é obrigatório' },
+        { status: 400 }
+      );
+    }
+
+    // Reordenação rápida: mover para cima/baixo trocando com vizinho
+    if (move && fluxoId) {
+      const stepAtualArr = await db.select().from(steps).where(eq(steps.id, id)).limit(1);
+      const stepAtual = stepAtualArr[0];
+      if (!stepAtual) {
+        return NextResponse.json({ error: 'Step não encontrado' }, { status: 404 });
+      }
+
+      const alvoOrdem = move === 'up' ? (stepAtual.ordem ?? 0) - 1 : (stepAtual.ordem ?? 0) + 1;
+      const vizinhoArr = await db
+        .select()
+        .from(steps)
+        .where(eq(steps.fluxoId, parseInt(String(fluxoId))))
+        .orderBy(asc(steps.ordem));
+
+      const vizinho = vizinhoArr.find((s: { ordem: any; }) => (s.ordem ?? 0) === alvoOrdem);
+      if (!vizinho) {
+        // Nada a fazer se não existir vizinho nessa direção
+        return NextResponse.json({ success: true, message: 'Borda alcançada, sem reordenação' });
+      }
+
+      // Trocar as ordens
+      await db.update(steps).set({ ordem: vizinho.ordem }).where(eq(steps.id, stepAtual.id));
+      await db.update(steps).set({ ordem: stepAtual.ordem }).where(eq(steps.id, vizinho.id));
+
+      return NextResponse.json({ success: true, message: 'Ordem atualizada com sucesso' });
+    }
+
+    const [stepAtualizado] = await db.update(steps)
+      .set({
+        ...(ordem !== undefined && { ordem }),
+        ...(tipo && { tipo }),
+        ...(conteudo && { conteudo: typeof conteudo === 'string' ? conteudo : JSON.stringify(conteudo) }),
+        ...(condicoes !== undefined && { condicoes: condicoes ? (typeof condicoes === 'string' ? condicoes : JSON.stringify(condicoes)) : null }),
+        ...(proximoStep !== undefined && { proximoStep }),
+        ...(ativo !== undefined && { ativo }),
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(steps.id, id))
+      .returning();
+
+    if (!stepAtualizado) {
+      return NextResponse.json(
+        { error: 'Step não encontrado' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ 
+      success: true, 
+      step: stepAtualizado,
+      message: 'Step atualizado com sucesso!' 
+    });
+
+  } catch (error) {
+    console.error('Erro ao atualizar step:', error);
+    return NextResponse.json(
+      { error: 'Erro interno do servidor' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const url = new URL(request.url);
+    const id = url.searchParams.get('id');
+    const fluxoId = url.searchParams.get('fluxoId');
+    
+    if (!id && !fluxoId) {
+      return NextResponse.json(
+        { error: 'ID ou fluxoId é obrigatório' },
+        { status: 400 }
+      );
+    }
+
+    if (fluxoId) {
+      // Deletar todos os steps de um fluxo
+      await db.delete(steps).where(eq(steps.fluxoId, parseInt(fluxoId)));
+      return NextResponse.json({ 
+        success: true,
+        message: 'Steps do fluxo deletados com sucesso!' 
+      });
+    } else {
+      // Deletar um step específico
+      await db.delete(steps).where(eq(steps.id, parseInt(id!)));
+      return NextResponse.json({ 
+        success: true,
+        message: 'Step deletado com sucesso!' 
+      });
+    }
+
+  } catch (error) {
+    console.error('Erro ao deletar step:', error);
+    return NextResponse.json(
+      { error: 'Erro interno do servidor' },
+      { status: 500 }
+    );
+  }
+}

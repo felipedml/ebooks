@@ -1,0 +1,12 @@
+{
+  "name": "Gerador de Livros",
+  "serve": {
+    "path": "/api/inngest"
+  },
+  "dev": {
+    "serverKind": "dev-server",
+    "autoPoll": {
+      "enabled": false
+    }
+  }
+}

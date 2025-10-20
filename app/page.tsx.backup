@@ -1,0 +1,1342 @@
+"use client";
+
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Check, ChevronsRight } from "lucide-react";
+import { useReducedMotion } from "./hooks/useReducedMotion";
+import { Textarea } from "@/components/ui/textarea";
+import FluxoDinamico from "@/components/FluxoDinamico";
+
+/**
+ * InteractiveChat — GPT‑like, super clean (Light) + Full‑Height
+ *
+ * Fluxo de exemplo pedido:
+ * 1) Briefing (perguntas)
+ * 2) Sumário proposto
+ * 3) Checkout/pagamento
+ * 4) Geração do livro (~100 páginas) com capítulos sequenciais
+ * 5) Capa criada por IA (ex: Canva)
+ */
+
+// ---------- Types ----------
+
+type ChatOption = { id: string; label: string; value: string };
+
+type ChatPiece =
+  | { kind: "text"; text: string; delayMs?: number }
+  | { kind: "options"; options: ChatOption[] };
+
+export type InteractiveChatProps = {
+  agentName?: string;
+  avatarUrl?: string;
+  script?: ChatPiece[];
+  onOptionSelect?: (value: string, option: ChatOption) => void;
+  typingSpeed?: number;
+  bubbleMaxWidthClass?: string;
+  className?: string;
+};
+
+// ---------- Utils ----------
+
+function clsx(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+// Normalize quebras de linha (Windows/Unix) e evita dividir incorretamente
+function splitLines(text: string): string[] {
+  return text.split(/\r?\n/);
+}
+
+function TextBlock({ text }: { text: string }) {
+  // preserva quebras de linha no <p>
+  const lines = splitLines(text);
+  return (
+    <p className="text-[15px] md:text-base leading-7 text-neutral-900">
+      {lines.map((line, i) => (
+        <span key={i}>
+          {line}
+          {i < lines.length - 1 && <br />}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+// ---------- Constants ----------
+
+const FALLBACK_AVATAR =
+  "/unnamed.jpg";
+
+// ---------- Minimal UI bits ----------
+
+function UIButton({
+  children,
+  onClick,
+  className,
+  disabled,
+  ariaLabel,
+  type = "button",
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  className?: string;
+  disabled?: boolean;
+  ariaLabel?: string;
+  type?: "button" | "submit" | "reset";
+}) {
+  return (
+    <button
+      type={type}
+      aria-label={ariaLabel}
+      disabled={disabled}
+      onClick={onClick}
+      className={clsx(
+        "inline-flex cursor-pointer select-none items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold whitespace-nowrap",
+        "border transition focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500",
+        className
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function AgentRow({
+  avatarUrl,
+  children,
+  bubbleMaxWidthClass,
+}: {
+  avatarUrl?: string;
+  children: React.ReactNode;
+  bubbleMaxWidthClass: string;
+}) {
+  const src = avatarUrl || FALLBACK_AVATAR;
+  return (
+    <div className="flex w-full items-start gap-3">
+      <div className="relative inline-flex h-10 w-10 shrink-0 select-none items-center justify-center overflow-hidden rounded-full bg-neutral-200 ring-1 ring-black/5">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={src} alt="" className="h-full w-full object-cover" />
+      </div>
+      <div
+        className={clsx(
+          "rounded-xl border border-neutral-200 bg-white px-4 py-3 md:px-5 md:py-4 text-neutral-900",
+          bubbleMaxWidthClass
+        )}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function TypingDots() {
+  return (
+    <div aria-label="Digitando" role="status" className="flex items-center gap-1 text-neutral-400">
+      <span className="sr-only">Digitando…</span>
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:0.2s]" />
+    </div>
+  );
+}
+
+// ---------- Helpers (business logic) ----------
+
+type Brief = { tema?: string; publico?: string; tom?: string };
+
+function makeToc(brief: Brief) {
+  const tema = brief.tema || "Tema";
+  const publico = brief.publico || "leitores";
+  const tom = brief.tom || "prático";
+  return (
+    `Sumário sugerido (tom ${tom}, para ${publico}):\n` +
+    `1. Introdução a ${tema}\n` +
+    `2. Fundamentos essenciais\n` +
+    `3. Ferramentas e conceitos-chave\n` +
+    `4. Estruturando sua base em ${tema}\n` +
+    `5. Métodos e boas práticas\n` +
+    `6. Estudos de caso\n` +
+    `7. Erros comuns e como evitar\n` +
+    `8. Estratégias avançadas\n` +
+    `9. Implementação passo a passo\n` +
+    `10. Medindo resultados\n` +
+    `11. Próximos passos e roadmap\n` +
+    `12. Conclusão`
+  );
+}
+
+function makeChapterBursts(total = 10) {
+  const arr: ChatPiece[] = [];
+  arr.push({ kind: "text", text: "Pagamento aprovado ✅", delayMs: 500 });
+  arr.push({ kind: "text", text: "Iniciando geração do livro (~100 páginas)…", delayMs: 600 });
+  for (let i = 1; i <= total; i++) {
+    arr.push({ kind: "text", text: `Gerando Capítulo ${i}/${total}…`, delayMs: 300 });
+  }
+  arr.push({ kind: "text", text: "Livro gerado com sucesso!", delayMs: 700 });
+  arr.push({ kind: "text", text: "Criando capa com IA (ex: Canva)…", delayMs: 600 });
+  arr.push({
+    kind: "text",
+    text: "Capa pronta: título provisório ‘Seu Livro de ${TEMA}’, autor ‘Seu Nome’.",
+    delayMs: 600,
+  }); // será substituído dinamicamente com o tema real
+  return arr;
+}
+
+// Inferência simples a partir de texto livre para Brief (tema/público/tom)
+function inferBriefFromText(input: string): Partial<Brief> {
+  const text = input.toLowerCase();
+  const inferred: Partial<Brief> = {};
+
+  // Tema
+  if (/negócio|negocio|marketing|venda|gestã|empreend/.test(text)) inferred.tema = "Negócios";
+  else if (/saúde|saude|fitness|nutri|medicin|bem-estar|bem estar/.test(text)) inferred.tema = "Saúde";
+  else if (/ficç|ficcao|romance|fantasia|conto|novela|históri/.test(text)) inferred.tema = "Ficção";
+
+  // Público
+  if (/iniciante|começando|básic|basico|leigo/.test(text)) inferred.publico = "Iniciantes";
+  else if (/profission|expert|avançad|avancad|especialist|técnic/.test(text)) inferred.publico = "Profissionais";
+  else if (/pais|mães|maes|famíli|famil|matern|patern/.test(text)) inferred.publico = "Pais e mães";
+
+  // Tom
+  if (/prátic|pratic|mão na massa|passo a passo/.test(text)) inferred.tom = "Prático";
+  else if (/inspirador|motiv|história de vida|exemplo de vida/.test(text)) inferred.tom = "Inspirador";
+  else if (/acadêmic|academic|científic|cientific|técnic|teoric/.test(text)) inferred.tom = "Acadêmico";
+
+  return inferred;
+}
+
+// ---------- Main ----------
+
+const DEFAULT_SCRIPT: ChatPiece[] = [
+  { kind: "text", text: "Olá! Vamos criar seu livro em 5 passos claros.", delayMs: 450 },
+  { kind: "text", text: "1) Briefing rápido • 2) Sumário • 3) Pagamento • 4) Geração (~100 págs) • 5) Capa por IA", delayMs: 650 },
+  {
+    kind: "options",
+    options: [
+      { id: "start", label: "Começar briefing", value: "start_briefing" },
+      { id: "later", label: "Depois", value: "later" },
+    ],
+  },
+];
+
+export default function InteractiveChat({
+  onOptionSelect,
+  typingSpeed = 18,
+  className,
+}: InteractiveChatProps) {
+  const prefersReduced = useReducedMotion();
+  
+  // Estados para fluxo dinâmico
+  const [fluxoAtivo, setFluxoAtivo] = useState<any>(null);
+  const [carregandoFluxo, setCarregandoFluxo] = useState(true);
+  const [usarFluxoEstatico, setUsarFluxoEstatico] = useState(false);
+
+  // timeline dinâmico - Script do Bruno
+  const [timeline, setTimeline] = useState<ChatPiece[]>([
+    { kind: "text", text: "Olá, sou Bruno!", delayMs: 600 },
+    { kind: "text", text: "Estou aqui para gerar seu livro e te entregar ele pronto em menos de uma hora", delayMs: 800 },
+    { kind: "text", text: "Muito prazer", delayMs: 500 },
+    { kind: "text", text: "Posso te apresentar uma nova forma de ganhar MUITO dinheiro que talvez você ainda não conhecia antes de chegar aqui?", delayMs: 1000 },
+    {
+      kind: "options",
+      options: [
+        { id: "pode1", label: "PODE", value: "pode_apresentar" },
+        { id: "pode2", label: "PODE COM CERTEZA", value: "pode_certeza" },
+      ],
+    },
+  ]);
+
+  // briefing state
+  const [brief, setBrief] = useState<Brief>({ tema: "", publico: "", tom: "" });
+
+  // Estados para coleta de dados do usuário
+  const [userData, setUserData] = useState({
+    nome: "",
+    titulo: "",
+    subtitulo: "",
+    resumo: "",
+    idioma: "",
+    autor: "",
+    email: "",
+    whatsapp: "",
+  });
+
+  // Estado para controlar qual input está ativo
+  const [awaitingInput, setAwaitingInput] = useState<string | null>(null);
+
+  // Estados para controle de geração dinâmica
+  interface DynamicQuestion {
+    id: string;
+    question: string;
+    type: string;
+    options?: string[];
+  }
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
+  const [dynamicQuestions, setDynamicQuestions] = useState<DynamicQuestion[]>([]);
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+
+  // Constantes do componente
+  const avatarUrl = "/unnamed.jpg";
+  const bubbleMaxWidthClass = "max-w-[340px] sm:max-w-[460px]";
+
+  // Pergunta de texto (IA decide)
+  const [awaitingTextQuestion, setAwaitingTextQuestion] = useState<null | { id: string; question: string }>(null);
+  const [textInputValue, setTextInputValue] = useState("");
+
+  // Respostas dinâmicas
+  const [dynamicAnswers, setDynamicAnswers] = useState<Record<string, string>>({});
+
+  // Remover lógica de perguntas de texto para simplificar
+  const promptNextUnansweredTextQuestion = useCallback(() => {
+    return false; // Sempre retorna false para não mostrar textarea
+  }, []);
+
+  // Carregar fluxo ativo ao inicializar
+  useEffect(() => {
+    const carregarFluxoAtivo = async () => {
+      try {
+        console.log('Iniciando carregamento do fluxo ativo...');
+        const response = await fetch('/api/fluxo-ativo');
+        
+        if (!response.ok) {
+          console.log('Resposta não OK:', response.status, response.statusText);
+          setUsarFluxoEstatico(true);
+          return;
+        }
+
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          console.log('Resposta não é JSON:', contentType);
+          setUsarFluxoEstatico(true);
+          return;
+        }
+
+        const data = await response.json();
+        console.log('Dados recebidos:', data);
+        
+        if (data.success && data.fluxo) {
+          console.log('Fluxo ativo encontrado:', data.fluxo.nome);
+          setFluxoAtivo(data.fluxo);
+        } else {
+          console.log('Nenhum fluxo ativo, usando estático. Razão:', data.message || data.error);
+          setUsarFluxoEstatico(true);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar fluxo ativo:', error);
+        // Em caso de erro, usar fluxo estático
+        setUsarFluxoEstatico(true);
+      } finally {
+        setCarregandoFluxo(false);
+      }
+    };
+
+    carregarFluxoAtivo();
+  }, []);
+
+  const [playedIndex, setPlayedIndex] = useState(0);
+  const [typingText, setTypingText] = useState("");
+  const [showOptions, setShowOptions] = useState<ChatOption[] | null>(null);
+  const [userEcho, setUserEcho] = useState<string | null>(null);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const currentPiece = timeline[playedIndex];
+
+  // Auto‑scroll
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: prefersReduced ? "auto" : "smooth" });
+  }, [playedIndex, typingText, prefersReduced]);
+
+  // Play script
+  useEffect(() => {
+    if (!currentPiece) return;
+    if (currentPiece.kind === "text") {
+      setTypingText("");
+      const start = setTimeout(() => {
+        let i = 0;
+        const chars = currentPiece.text.split("");
+        const step = () => {
+          i += 1;
+          setTypingText(chars.slice(0, i).join(""));
+          if (i >= chars.length) {
+            setTimeout(() => setPlayedIndex((v) => v + 1), 260);
+            return;
+          }
+          const effective = Math.max(7, Math.min(typingSpeed, 28));
+          timer = window.setTimeout(step, effective);
+        };
+        let timer = window.setTimeout(step, 0);
+      }, currentPiece.delayMs ?? 380);
+      return () => clearTimeout(start);
+    }
+    if (currentPiece.kind === "options") setShowOptions(currentPiece.options);
+  }, [currentPiece, typingSpeed]);
+
+  const inject = useCallback((pieces: ChatPiece[]) => {
+    setTimeline((prev) => [...prev, ...pieces]);
+  }, []);
+
+  // Função para gerar perguntas dinâmicas (tenta IA, fallback para mock)
+  const generateDynamicQuestions = useCallback(async (briefing: string) => {
+    setIsGeneratingQuestions(true);
+
+    // Backup mockado
+    const mockQuestions = [
+      {
+        id: 'q1',
+        question: 'Qual é o foco principal do seu livro?',
+        type: 'multiple_choice',
+        options: ['Crescimento pessoal', 'Estratégias práticas', 'Histórias inspiradoras', 'Guia técnico']
+      },
+      {
+        id: 'q2',
+        question: 'Quem é seu público-alvo?',
+        type: 'multiple_choice',
+        options: ['Iniciantes no assunto', 'Profissionais experientes', 'Estudantes', 'Empreendedores']
+      }
+    ];
+
+    try {
+      // Tentar IA primeiro
+      const response = await fetch('/api/generate-questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ briefing }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const qs = Array.isArray(data.questions) ? data.questions : [];
+        if (qs.length > 0) {
+          setDynamicQuestions(qs);
+          setIsGeneratingQuestions(false);
+          return qs;
+        }
+      }
+    } catch {
+      console.log('IA falhou, usando backup mockado');
+    }
+
+    // Usar backup se IA falhar
+    setDynamicQuestions(mockQuestions);
+    setIsGeneratingQuestions(false);
+    return mockQuestions;
+  }, []);
+
+  // Função para gerar sumário dinâmico (tenta IA, fallback para mock)
+  const generateDynamicSummary = useCallback(async (tema: string, publico: string, tom: string) => {
+    setIsGeneratingSummary(true);
+
+    try {
+      const response = await fetch('/api/generate-summary', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ tema, publico, tom }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.summary) {
+          setIsGeneratingSummary(false);
+          return data.summary;
+        }
+      }
+    } catch {
+      console.log('IA falhou para sumário, usando backup');
+    }
+
+    // Fallback sempre funciona
+    const fallbackSummary = makeToc({ tema, publico, tom });
+    setIsGeneratingSummary(false);
+    return fallbackSummary;
+  }, []);
+
+  // Após a geração de perguntas dinâmicas, continuar o fluxo quando tudo respondido
+  const continueAfterDynamicIfReady = useCallback(async () => {
+    // Se todas as perguntas dinâmicas foram respondidas, decide o próximo passo
+    const allAnswered = dynamicQuestions.length > 0 && dynamicQuestions.every((q: DynamicQuestion) => dynamicAnswers[q.id] !== undefined);
+    if (!allAnswered) return;
+
+    // Inferir tema/público/tom das respostas
+    const respostas = Object.values(dynamicAnswers).join(' ');
+    const inferred = inferBriefFromText(respostas);
+
+    // Definir valores padrão se não inferidos
+    const tema = brief.tema || inferred.tema || 'Negócios';
+    const publico = brief.publico || inferred.publico || 'Iniciantes';
+    const tom = brief.tom || inferred.tom || 'Prático';
+
+    setBrief(prev => ({ ...prev, tema, publico, tom }));
+
+    // Mostrar resumo das respostas primeiro
+    inject([
+      { kind: 'text', text: 'Ótimo! Briefing completo. Resumo:', delayMs: 400 },
+      { kind: 'text', text: `📋 Tema: ${tema} | Público: ${publico} | Tom: ${tom}`, delayMs: 500 },
+      { kind: 'text', text: 'Agora vou gerar um sumário personalizado baseado em tudo que coletamos…', delayMs: 600 },
+    ]);
+
+    // Gerar sumário
+    const summary = await generateDynamicSummary(tema, publico, tom);
+    inject([
+      { kind: 'text', text: 'Sumário gerado com IA:', delayMs: 600 },
+      { kind: 'text', text: summary, delayMs: 500 },
+      { kind: 'options', options: [{ id: 'oktoc', label: 'Aprovar sumário', value: 'approve_toc' }, { id: 'edittoc', label: 'Editar sumário', value: 'edit_toc' }] },
+    ]);
+  }, [brief, dynamicAnswers, dynamicQuestions, generateDynamicSummary, inject]);
+
+  const handleSelect = useCallback(
+    (opt: ChatOption) => {
+      setShowOptions(null);
+      setUserEcho(opt.label);
+      onOptionSelect?.(opt.value, opt);
+
+      // Script do Bruno - Fluxo sequencial fixo
+      if (opt.value === "pode_apresentar" || opt.value === "pode_certeza") {
+        inject([
+          { kind: "text", text: "Maravilha, qual seu nome?", delayMs: 600 },
+        ]);
+        setAwaitingInput("nome");
+        return;
+      }
+
+      if (opt.value === "nunca_nem_imaginei" || opt.value === "ja_sabia_sim") {
+        inject([
+          { kind: "text", text: "Perfeito, então pense um pouco...", delayMs: 600 },
+          { kind: "text", text: "Porque ganhar dinheiro assim é tão pouco conhecido?", delayMs: 800 },
+          { kind: "text", text: "Qual é a maior dificuldade de ganhar dinheiro vendendo ebooks na Amazon?", delayMs: 900 },
+          { kind: "text", text: "(e nos outros sites também, como Google Play Books, Apple Books, etc, etc, etc)", delayMs: 700 },
+          { kind: "text", text: "Conseguiu chegar em alguma resposta?", delayMs: 600 },
+          {
+            kind: "options",
+            options: [
+              { id: "acho1", label: "ACHO QUE SIM", value: "acho_que_sim" },
+              { id: "sim1", label: "SIM, EU SEI", value: "sim_eu_sei" },
+              { id: "nao1", label: "NÃO FAÇO IDÉIA", value: "nao_faco_ideia" },
+            ],
+          },
+        ]);
+        return;
+      }
+
+      if (opt.value === "acho_que_sim" || opt.value === "sim_eu_sei" || opt.value === "nao_faco_ideia") {
+        inject([
+          { kind: "text", text: "Com certeza a maior dificuldade é ESCREVER OS EBOOKS", delayMs: 600 },
+          { kind: "text", text: "Você precisa gastar semanas, meses ou até ANOS em alguns casos, para escrever um livro e colocar para vender", delayMs: 1000 },
+          { kind: "text", text: "E mesmo com a Inteligência Artificial, as plataformas conseguem identificar se seu ebook foi escrito por IA ou por um humano", delayMs: 1200 },
+          { kind: "text", text: "E se pegarem que foi escrito por IA podem até bloquear sua conta...", delayMs: 800 },
+          { kind: "text", text: "Mas isso não precisa te desanimar, porque a gente criou uma IA que escreve 100% COM LINGUAGEM DE UM SER HUMANO", delayMs: 1200 },
+          { kind: "text", text: "E você pode publicar DEZENAS de livros por semana, se quiser...", delayMs: 800 },
+          { kind: "text", text: "Quer saber como funciona?", delayMs: 600 },
+          {
+            kind: "options",
+            options: [
+              { id: "quero1", label: "Quero sim !", value: "quero_saber" },
+            ],
+          },
+        ]);
+        return;
+      }
+
+      if (opt.value === "quero_saber") {
+        inject([
+          { kind: "text", text: "Quer gerar o seu livro agora e começar a ganhar dinheiro colocando para vender nas plataformas?", delayMs: 800 },
+          {
+            kind: "options",
+            options: [
+              { id: "quero2", label: "QUERO MEU LIVRO", value: "quero_livro" },
+            ],
+          },
+        ]);
+        return;
+      }
+
+      if (opt.value === "quero_livro") {
+        inject([
+          { kind: "text", text: "Perfeito, então vamos começar!", delayMs: 500 },
+          { kind: "text", text: "Vou escrever UM LIVRO COMPLETO PARA VOCÊ, DO ZERO, COM 100% DOS DIREITOS AUTORAIS SEUS, EM MENOS DE 1 HORA POR 49,90...", delayMs: 1200 },
+          { kind: "text", text: "É isso ai, em menos de uma hora você vai ter em mãos seu livro digital com aproximadamente 100 a 130 páginas A4...", delayMs: 1000 },
+          { kind: "text", text: "Escrito palavra por palavra...", delayMs: 600 },
+          { kind: "text", text: "Seguindo exatamente tudo que você quiser que tenha de conteúdo nele!", delayMs: 800 },
+          { kind: "text", text: "E você terá 100% dos direitos autorais para fazer o que quiser!", delayMs: 700 },
+          { kind: "text", text: "Vamos começar?", delayMs: 500 },
+          {
+            kind: "options",
+            options: [
+              { id: "vamos1", label: "VAMOS, QUERO FAZER!", value: "vamos_fazer" },
+            ],
+          },
+        ]);
+        return;
+      }
+
+      if (opt.value === "vamos_fazer") {
+        inject([
+          { kind: "text", text: `Muito bom ${userData.nome}!`, delayMs: 500 },
+          { kind: "text", text: "Você já tem a ideia de livro que quer gerar?", delayMs: 600 },
+          { kind: "text", text: "Como título, subtítulo e o conteúdo que quer no livro...", delayMs: 700 },
+          {
+            kind: "options",
+            options: [
+              { id: "ja1", label: "JA TENHO A IDEIA COMPLETA", value: "ja_tenho_ideia" },
+              { id: "ajude1", label: "ME AJUDE A FAZER", value: "me_ajude" },
+            ],
+          },
+        ]);
+        return;
+      }
+
+      if (opt.value === "ja_tenho_ideia" || opt.value === "me_ajude") {
+        inject([
+          { kind: "text", text: "Certo", delayMs: 400 },
+          { kind: "text", text: "Qual título do livro? (Em poucas palavras)", delayMs: 600 },
+          { kind: "text", text: "(Ex: O Clube das 5 da Manhã)", delayMs: 500 },
+        ]);
+        setAwaitingInput("titulo");
+        return;
+      }
+
+      if (opt.value === "portugues" || opt.value === "ingles") {
+        setUserData(prev => ({ ...prev, idioma: opt.label }));
+        inject([
+          { kind: "text", text: "Nome do autor:", delayMs: 500 },
+        ]);
+        setAwaitingInput("autor");
+        return;
+      }
+
+      if (opt.value === "tudo_certo" || opt.value === "tem_erro") {
+        if (opt.value === "tudo_certo") {
+          // Salvar dados no banco
+          inject([
+            { kind: "text", text: "Salvando seus dados...", delayMs: 400 },
+          ]);
+          
+          fetch('/api/salvar-livro', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(userData),
+          })
+          .then(response => response.json())
+          .then(data => {
+            if (data.success) {
+              inject([
+                { kind: "text", text: "✅ Dados salvos com sucesso!", delayMs: 500 },
+                { kind: "text", text: "Perfeito! Vamos seguir!", delayMs: 600 },
+                { kind: "text", text: "Vou te redirecionar para o link de pagamento...", delayMs: 800 },
+                { kind: "text", text: `💰 Valor: R$ ${data.livro.valor.toFixed(2).replace('.', ',')}`, delayMs: 600 },
+                { kind: "text", text: "🔗 Redirecionando para pagamento seguro...", delayMs: 1000 },
+                { kind: "text", text: "Obrigado pela confiança! Seu livro será gerado assim que o pagamento for confirmado.", delayMs: 1200 },
+              ]);
+            } else {
+              inject([
+                { kind: "text", text: "❌ Erro ao salvar dados. Tente novamente.", delayMs: 500 },
+                { kind: "text", text: "Qual seu nome?", delayMs: 600 },
+              ]);
+              setAwaitingInput("nome");
+            }
+          })
+          .catch(error => {
+            console.error('Erro ao salvar:', error);
+            inject([
+              { kind: "text", text: "❌ Erro de conexão. Tente novamente.", delayMs: 500 },
+              { kind: "text", text: "Qual seu nome?", delayMs: 600 },
+            ]);
+            setAwaitingInput("nome");
+          });
+        } else {
+          inject([
+            { kind: "text", text: "Sem problemas! Vamos corrigir os dados.", delayMs: 500 },
+            { kind: "text", text: "Qual seu nome?", delayMs: 600 },
+          ]);
+          setAwaitingInput("nome");
+        }
+        return;
+      }
+
+      // Capturar resposta de pergunta dinâmica (multiple_choice)
+      const dyn = dynamicQuestions.find((q: DynamicQuestion) => opt.value.startsWith(`${q.id}_`));
+      if (dyn) {
+        setDynamicAnswers((prev) => {
+          const newAnswers = { ...prev, [dyn.id]: opt.label };
+          console.log('Respostas atuais:', newAnswers);
+          console.log('Total de perguntas:', dynamicQuestions.length);
+          console.log('Respostas dadas:', Object.keys(newAnswers).length);
+
+          // Se já tem 1 ou mais respostas, ir direto para o sumário (simplificar)
+          if (Object.keys(newAnswers).length >= 1) {
+            setTimeout(() => {
+              inject([
+                { kind: 'text', text: 'Perfeito! Tenho informações suficientes.', delayMs: 400 },
+                { kind: 'text', text: 'Vou gerar um sumário personalizado agora...', delayMs: 600 },
+              ]);
+
+              // Definir briefing padrão e gerar sumário
+              const tema = 'Negócios';
+              const publico = 'Iniciantes';
+              const tom = 'Prático';
+              setBrief(prev => ({ ...prev, tema, publico, tom }));
+
+              generateDynamicSummary(tema, publico, tom).then((summary) => {
+                inject([
+                  { kind: 'text', text: 'Sumário gerado:', delayMs: 600 },
+                  { kind: 'text', text: summary, delayMs: 500 },
+                  { kind: 'options', options: [{ id: 'oktoc', label: 'Aprovar sumário', value: 'approve_toc' }, { id: 'edittoc', label: 'Editar sumário', value: 'edit_toc' }] },
+                ]);
+              });
+            }, 800);
+          }
+
+          return newAnswers;
+        });
+        return;
+      }
+
+      // Capturar respostas de fallback (quando não encontra pergunta dinâmica específica)
+      if (opt.value.startsWith("pergunta_") || opt.value.includes("continuar") || opt.value.includes("prosseguir") || opt.value.includes("avancar")) {
+        const questionNumber = opt.value.includes("1") ? "pergunta_1" :
+          opt.value.includes("2") ? "pergunta_2" :
+            opt.value.includes("3") ? "pergunta_3" : `fallback_${Date.now()}`;
+
+        setDynamicAnswers((prev) => {
+          const newAnswers = { ...prev, [questionNumber]: opt.label };
+          console.log('Resposta de fallback capturada:', newAnswers);
+
+          // Contar respostas após a atualização (não usado mas mantido para debug)
+
+          // Ir direto para o sumário após qualquer resposta (simplificar)
+          setTimeout(() => {
+            inject([
+              { kind: 'text', text: 'Perfeito! Tenho informações suficientes.', delayMs: 400 },
+              { kind: 'text', text: 'Vou gerar um sumário personalizado agora...', delayMs: 600 },
+            ]);
+
+            // Definir briefing padrão e gerar sumário
+            const tema = 'Negócios';
+            const publico = 'Iniciantes';
+            const tom = 'Prático';
+            setBrief(prev => ({ ...prev, tema, publico, tom }));
+
+            generateDynamicSummary(tema, publico, tom).then((summary) => {
+              inject([
+                { kind: 'text', text: 'Sumário gerado:', delayMs: 600 },
+                { kind: 'text', text: summary, delayMs: 500 },
+                { kind: 'options', options: [{ id: 'oktoc', label: 'Aprovar sumário', value: 'approve_toc' }, { id: 'edittoc', label: 'Editar sumário', value: 'edit_toc' }] },
+              ]);
+            });
+          }, 800);
+
+          return newAnswers;
+        });
+        return;
+      }
+
+      // roteador do fluxo
+      if (opt.value === "start_briefing" || opt.value === "later") {
+        inject([
+          { kind: "text", text: "Briefing rápido: vou gerar perguntas personalizadas para seu livro.", delayMs: 500 },
+          { kind: "text", text: "Analisando seu perfil para criar perguntas relevantes...", delayMs: 600 },
+        ]);
+
+        // Gerar perguntas dinâmicas (mockadas)
+        generateDynamicQuestions("Usuário iniciou briefing para criação de livro").then((questions) => {
+          // Criar peças dinâmicas para as perguntas
+          const dynamicPieces: ChatPiece[] = [];
+
+          if (Array.isArray(questions) && questions.length > 0) {
+            questions.forEach((question: DynamicQuestion, index: number) => {
+              if (question && question.question) {
+                dynamicPieces.push({
+                  kind: "text",
+                  text: `Pergunta ${index + 1}/${questions.length} — ${question.question}`,
+                  delayMs: 500
+                });
+
+                // Se tem opções, usar as da IA
+                if (Array.isArray(question.options) && question.options.length > 0) {
+                  const options: ChatOption[] = question.options.map((option: string, optIndex: number) => ({
+                    id: `${question.id}_${optIndex}`,
+                    label: option,
+                    value: `${question.id}_${option.toLowerCase().replace(/\s+/g, '_')}`
+                  }));
+
+                  dynamicPieces.push({
+                    kind: "options",
+                    options
+                  });
+                } else {
+                  // Se não tem opções (pergunta de texto), criar opções baseadas no contexto da pergunta
+                  let contextualOptions: ChatOption[] = [];
+
+                  // Detectar tipo de pergunta e criar opções relevantes
+                  const questionText = question.question.toLowerCase();
+
+                  if (questionText.includes('público') || questionText.includes('alvo')) {
+                    contextualOptions = [
+                      { id: `${question.id}_0`, label: "Iniciantes no assunto", value: `${question.id}_iniciantes` },
+                      { id: `${question.id}_1`, label: "Profissionais experientes", value: `${question.id}_profissionais` },
+                      { id: `${question.id}_2`, label: "Estudantes", value: `${question.id}_estudantes` },
+                      { id: `${question.id}_3`, label: "Público geral", value: `${question.id}_geral` },
+                    ];
+                  } else if (questionText.includes('escopo') || questionText.includes('conteúdo')) {
+                    contextualOptions = [
+                      { id: `${question.id}_0`, label: "Conceitos básicos", value: `${question.id}_basicos` },
+                      { id: `${question.id}_1`, label: "Aplicação prática", value: `${question.id}_pratica` },
+                      { id: `${question.id}_2`, label: "Teoria avançada", value: `${question.id}_avancada` },
+                      { id: `${question.id}_3`, label: "Casos de estudo", value: `${question.id}_casos` },
+                    ];
+                  } else if (questionText.includes('tom') || questionText.includes('formato') || questionText.includes('estilo')) {
+                    contextualOptions = [
+                      { id: `${question.id}_0`, label: "Prático e direto", value: `${question.id}_pratico` },
+                      { id: `${question.id}_1`, label: "Inspirador", value: `${question.id}_inspirador` },
+                      { id: `${question.id}_2`, label: "Acadêmico", value: `${question.id}_academico` },
+                      { id: `${question.id}_3`, label: "Conversacional", value: `${question.id}_conversacional` },
+                    ];
+                  } else {
+                    // Opções genéricas como fallback
+                    contextualOptions = [
+                      { id: `${question.id}_0`, label: "Sim, definitivamente", value: `${question.id}_sim` },
+                      { id: `${question.id}_1`, label: "Parcialmente", value: `${question.id}_parcial` },
+                      { id: `${question.id}_2`, label: "Não", value: `${question.id}_nao` },
+                      { id: `${question.id}_3`, label: "Pular pergunta", value: `${question.id}_pular` },
+                    ];
+                  }
+
+                  dynamicPieces.push({
+                    kind: "options",
+                    options: contextualOptions
+                  });
+                }
+              }
+            });
+          }
+
+          // SEMPRE injetar pelo menos as perguntas básicas de fallback
+          if (dynamicPieces.length > 0) {
+            inject(dynamicPieces);
+          } else {
+            // Fallback completo se não conseguiu gerar perguntas
+            inject([
+              { kind: "text", text: "Vamos começar com algumas perguntas básicas.", delayMs: 400 },
+              { kind: "text", text: "Pergunta 1/3 — Qual é o tema principal?", delayMs: 500 },
+              {
+                kind: "options",
+                options: [
+                  { id: "pergunta_1_0", label: "Negócios", value: "pergunta_1_negocios" },
+                  { id: "pergunta_1_1", label: "Saúde", value: "pergunta_1_saude" },
+                  { id: "pergunta_1_2", label: "Ficção", value: "pergunta_1_ficcao" },
+                  { id: "pergunta_1_3", label: "Outro", value: "pergunta_1_outro" },
+                ],
+              },
+            ]);
+          }
+        });
+        return;
+      }
+
+      if (opt.value.startsWith("tema_")) {
+        const tema = opt.label;
+        setBrief((b) => ({ ...b, tema }));
+        inject([
+          { kind: "text", text: `Perfeito. Tema definido: ${tema}.`, delayMs: 400 },
+          { kind: "text", text: "Pergunta 2/3 — Para quem é o livro?", delayMs: 500 },
+          {
+            kind: "options",
+            options: [
+              { id: "p1", label: "Iniciantes", value: "publico_iniciantes" },
+              { id: "p2", label: "Profissionais", value: "publico_profissionais" },
+              { id: "p3", label: "Pais e mães", value: "publico_pais" },
+            ],
+          },
+        ]);
+        return;
+      }
+
+      if (opt.value.startsWith("publico_")) {
+        const publico = opt.label;
+        setBrief((b) => ({ ...b, publico }));
+        inject([
+          { kind: "text", text: `Ótimo. Público-alvo: ${publico}.`, delayMs: 400 },
+          { kind: "text", text: "Pergunta 3/3 — Qual o tom desejado?", delayMs: 500 },
+          {
+            kind: "options",
+            options: [
+              { id: "tm1", label: "Prático", value: "tom_pratico" },
+              { id: "tm2", label: "Inspirador", value: "tom_inspirador" },
+              { id: "tm3", label: "Acadêmico", value: "tom_academico" },
+            ],
+          },
+        ]);
+        return;
+      }
+
+      if (opt.value.startsWith("tom_")) {
+        const tom = opt.label;
+        setBrief((b) => ({ ...b, tom }));
+
+        inject([
+          { kind: "text", text: `Perfeito. Tom definido: ${tom}.`, delayMs: 400 },
+          { kind: "text", text: "Gerando um sumário personalizado baseado no seu briefing...", delayMs: 500 },
+        ]);
+
+        // Gerar sumário dinâmico
+        generateDynamicSummary(brief.tema || 'Tema não definido', brief.publico || 'Público não definido', tom).then((summary) => {
+          inject([
+            { kind: "text", text: "Sumário gerado com IA:", delayMs: 700 },
+            { kind: "text", text: summary, delayMs: 500 },
+            {
+              kind: "options",
+              options: [
+                { id: "oktoc", label: "Aprovar sumário", value: "approve_toc" },
+                { id: "edittoc", label: "Editar sumário", value: "edit_toc" },
+              ],
+            },
+          ]);
+        });
+        return;
+      }
+
+      if (opt.value === "edit_toc") {
+        inject([
+          { kind: "text", text: "Você pode editar o sumário manualmente ou solicitar ajustes.", delayMs: 500 },
+          {
+            kind: "options",
+            options: [
+              { id: "manual", label: "Editar manualmente", value: "manual_edit" },
+              { id: "ai_adjust", label: "Pedir ajuste à IA", value: "ai_adjust" },
+              { id: "approve_anyway", label: "Aprovar mesmo assim", value: "approve_toc" },
+            ],
+          },
+        ]);
+        return;
+      }
+
+      if (opt.value === "approve_toc") {
+        inject([
+          { kind: "text", text: "Sumário aprovado! Agora vamos para o pagamento.", delayMs: 500 },
+          { kind: "text", text: "Valor: R$ 97 (livro completo ~100 páginas + capa)", delayMs: 600 },
+          {
+            kind: "options",
+            options: [
+              { id: "pay", label: "Pagar agora", value: "payment" },
+              { id: "later", label: "Pagar depois", value: "later" },
+            ],
+          },
+        ]);
+        return;
+      }
+
+      if (opt.value === "payment") {
+        inject([
+          { kind: "text", text: "Redirecionando para pagamento...", delayMs: 400 },
+          { kind: "text", text: "Simulando pagamento aprovado ✅", delayMs: 1200 },
+          ...makeChapterBursts(12),
+        ]);
+        return;
+      }
+
+      if (opt.value === "manual_edit" || opt.value === "ai_adjust") {
+        inject([
+          { kind: "text", text: "Funcionalidade em desenvolvimento. Por enquanto, vamos aprovar o sumário.", delayMs: 500 },
+          {
+            kind: "options",
+            options: [
+              { id: "approve_anyway", label: "Aprovar sumário", value: "approve_toc" },
+            ],
+          },
+        ]);
+        return;
+      }
+
+      if (opt.value === "plans") {
+        inject([
+          { kind: "text", text: "Planos: Básico (R$ 97) • Pro (R$ 197, inclui revisão humana) • Studio (R$ 297, inclui capa premium)", delayMs: 500 },
+          {
+            kind: "options",
+            options: [
+              { id: "pay2", label: "Pagar agora (R$ 97)", value: "pay" },
+            ],
+          },
+        ]);
+        return;
+      }
+
+      if (opt.value === "pay") {
+        // gerar sequência de capítulos + capa. Substitui ${TEMA}
+        const tema = brief.tema || "${tema}";
+        const bursts = makeChapterBursts(10).map((p) => {
+          if (p.kind === "text" && p.text.includes("${TEMA}")) {
+            return { ...p, text: p.text.replace("${TEMA}", tema) } as ChatPiece;
+          }
+          return p;
+        });
+        inject(bursts);
+        return;
+      }
+    },
+    [onOptionSelect, inject, brief, continueAfterDynamicIfReady, dynamicQuestions, generateDynamicQuestions, generateDynamicSummary]
+  );
+
+  useEffect(() => {
+    if (!userEcho) return;
+    const timeout = setTimeout(() => {
+      setUserEcho(null);
+      setPlayedIndex((v) => (v < timeline.length - 1 ? v + 1 : v));
+    }, 500);
+    return () => clearTimeout(timeout);
+  }, [userEcho, timeline.length]);
+
+  const donePieces = useMemo(
+    () =>
+      timeline
+        .slice(0, playedIndex)
+        .filter((p) => p.kind === "text") as Extract<ChatPiece, { kind: "text" }>[],
+    [playedIndex, timeline]
+  );
+  
+  // Callback para quando o fluxo dinâmico for concluído
+  const handleFluxoComplete = useCallback((respostas: Record<string, string>) => {
+    console.log('Fluxo concluído com respostas:', respostas);
+    // Aqui você pode processar as respostas conforme necessário
+    // Por exemplo, redirecionar para pagamento, etc.
+  }, []);
+
+  // Loading state
+  if (carregandoFluxo) {
+    return (
+      <div className="flex items-center justify-center h-full w-full">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Carregando fluxo...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Se há fluxo ativo configurado, usar FluxoDinamico
+  if (fluxoAtivo && !usarFluxoEstatico) {
+    return (
+      <section className={`flex flex-col gap-6 py-4 px-4 h-full w-full ${className}`}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-800">
+            {fluxoAtivo.nome}
+          </h2>
+          <button
+            onClick={() => setUsarFluxoEstatico(true)}
+            className="text-sm text-gray-500 hover:text-gray-700 underline"
+          >
+            Usar fluxo padrão
+          </button>
+        </div>
+        <FluxoDinamico 
+          fluxoId={fluxoAtivo.id} 
+          onComplete={handleFluxoComplete}
+        />
+      </section>
+    );
+  }
+
+  // Fluxo estático (original)
+  return (
+    <section
+      aria-label="Conversa interativa"
+      className={clsx(
+        "flex flex-col gap-6 py-4 px-4 h-full w-full", // full-height
+        className
+      )}
+    >
+      {/* Conversation area */}
+      <div
+        ref={containerRef}
+        className={`flex-1 w-full overflow-y-auto border-t border-neutral-200 bg-white p-4 md:p-6 pb-[env(safe-area-inset-bottom)]`}
+      >
+        <div className="mx-auto flex max-w-3xl flex-col gap-4 md:gap-5">
+          {donePieces.map((piece, idx) => (
+            <motion.div
+              key={`done-${idx}`}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ type: "spring", stiffness: 240, damping: 26, mass: 0.7 }}
+            >
+              <AgentRow avatarUrl={avatarUrl} bubbleMaxWidthClass={bubbleMaxWidthClass}>
+                <TextBlock text={piece.text} />
+              </AgentRow>
+            </motion.div>
+          ))}
+
+          {currentPiece && currentPiece.kind === "text" && (
+            <motion.div
+              key={`typing-${playedIndex}`}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ type: "spring", stiffness: 240, damping: 26, mass: 0.7 }}
+            >
+              <AgentRow avatarUrl={avatarUrl} bubbleMaxWidthClass={bubbleMaxWidthClass}>
+                <div className="min-h-[1.5rem]">
+                  {typingText ? (
+                    <TextBlock text={typingText} />
+                  ) : isGeneratingQuestions || isGeneratingSummary ? (
+                    // Loader skeleton + texto de status
+                    <div className="flex items-center gap-3">
+                      <div className="h-4 w-28 animate-pulse rounded bg-neutral-200" />
+                      <div className="h-4 w-36 animate-pulse rounded bg-neutral-200" />
+                      <span className="text-sm text-neutral-600">
+                        {isGeneratingQuestions ? "Gerando perguntas personalizadas..." : "Criando sumário com IA..."}
+                      </span>
+                    </div>
+                  ) : (
+                    <TypingDots />
+                  )}
+                </div>
+              </AgentRow>
+            </motion.div>
+          )}
+
+          {/* Loader adicional quando está gerando algo */}
+          {(isGeneratingQuestions || isGeneratingSummary) && (
+            <motion.div
+              key="loading-indicator"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ type: "spring", stiffness: 240, damping: 26, mass: 0.7 }}
+            >
+              <AgentRow avatarUrl={avatarUrl} bubbleMaxWidthClass={bubbleMaxWidthClass}>
+                <div className="flex items-center gap-3 py-2">
+                  <div className="flex gap-1">
+                    <div className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+                    <div className="h-2 w-2 animate-pulse rounded-full bg-emerald-500 [animation-delay:0.2s]" />
+                    <div className="h-2 w-2 animate-pulse rounded-full bg-emerald-500 [animation-delay:0.4s]" />
+                  </div>
+                  <span className="text-sm text-neutral-600">
+                    {isGeneratingQuestions ? "Gerando perguntas personalizadas..." : "Criando sumário com IA..."}
+                  </span>
+                </div>
+              </AgentRow>
+            </motion.div>
+          )}
+
+          {/* User echo */}
+          <AnimatePresence>
+            {userEcho && (
+              <motion.div
+                key="user-echo"
+                initial={{ opacity: 0, x: 8 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 8 }}
+                transition={{ type: "spring", stiffness: 260, damping: 22 }}
+                className="ml-auto"
+              >
+                <div className="max-w-[80%] rounded-xl bg-emerald-600 px-3 py-2 text-white">
+                  <span className="text-sm font-medium">{userEcho}</span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Quick replies */}
+        <AnimatePresence>
+          {showOptions && (
+            <motion.div
+              key="options"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={{ type: "spring", stiffness: 260, damping: 24 }}
+              className="pointer-events-auto sticky bottom-2 mt-4 flex w-full justify-center"
+            >
+              <div className="mx-auto flex max-w-2xl flex-wrap items-center justify-center gap-2 rounded-full border border-neutral-200 bg-white p-2">
+                {showOptions.map((opt, i) => (
+                  <UIButton
+                    key={opt.id}
+                    ariaLabel={`Selecionar: ${opt.label}`}
+                    className={clsx(
+                      "min-w-[9.5rem] border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
+                      i === 1 && "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
+                    )}
+                    onClick={() => handleSelect(opt)}
+                  >
+                    {i === 1 ? <Check className="h-4 w-4" /> : <ChevronsRight className="h-4 w-4" />}
+                    {opt.label}
+                  </UIButton>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Input Text Question */}
+        <AnimatePresence>
+          {awaitingInput && (
+            <motion.div
+              key="text-input"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={{ type: "spring", stiffness: 260, damping: 24 }}
+              className="pointer-events-auto sticky bottom-2 mt-4 flex w-full justify-center"
+            >
+              <div className="mx-auto flex max-w-2xl w-full items-center gap-3 md:gap-4 rounded-xl border border-neutral-200 bg-white p-2 md:p-3">
+                <Textarea
+                  value={textInputValue}
+                  onChange={(e) => setTextInputValue(e.target.value)}
+                  placeholder={awaitingInput === "nome" ? "Digite seu nome" :
+                    awaitingInput === "titulo" ? "Ex: O Clube das 5 da Manhã" :
+                      awaitingInput === "subtitulo" ? "Ex: Como Acordar Cedo Pode Transformar sua Vida" :
+                        awaitingInput === "resumo" ? "Descreva o conteúdo do livro em detalhes..." :
+                          awaitingInput === "autor" ? "Nome do autor" :
+                            awaitingInput === "email" ? "seu@email.com" :
+                              awaitingInput === "whatsapp" ? "11999999999" : "Digite aqui..."}
+                  className="flex-1 min-h-[44px] text-sm"
+                />
+                <UIButton
+                  ariaLabel="Enviar resposta"
+                  className="border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
+                  onClick={() => {
+                    const value = textInputValue.trim();
+                    if (!value) return;
+                    setUserEcho(value);
+
+                    // Script do Bruno - Capturar inputs específicos
+                    if (awaitingInput === "nome") {
+                      setUserData(prev => ({ ...prev, nome: value }));
+                      setAwaitingInput(null);
+                      inject([
+                        { kind: "text", text: `Prazer, ${value}!`, delayMs: 500 },
+                        { kind: "text", text: "Você sabia que dava para ganhar tanto dinheiro vendendo ebooks na Amazon?", delayMs: 800 },
+                        {
+                          kind: "options",
+                          options: [
+                            { id: "nunca1", label: "NUNCA NEM IMAGINEI", value: "nunca_nem_imaginei" },
+                            { id: "sabia1", label: "JÁ SABIA SIM", value: "ja_sabia_sim" },
+                          ],
+                        },
+                      ]);
+                    } else if (awaitingInput === "titulo") {
+                      setUserData(prev => ({ ...prev, titulo: value }));
+                      setAwaitingInput(null);
+                      inject([
+                        { kind: "text", text: "Subtítulo:", delayMs: 500 },
+                        { kind: "text", text: "(Ex: Como Acordar Cedo Pode Transformar sua Vida e Conduzi-lo ao Sucesso)", delayMs: 700 },
+                      ]);
+                      setAwaitingInput("subtitulo");
+                    } else if (awaitingInput === "subtitulo") {
+                      setUserData(prev => ({ ...prev, subtitulo: value }));
+                      setAwaitingInput(null);
+                      inject([
+                        { kind: "text", text: "Um breve resumo do que você quer que tenha no conteúdo do livro.", delayMs: 600 },
+                        { kind: "text", text: "Seja rico(a) em detalhes. Quanto mais informações você inserir, melhor será seu livro.", delayMs: 800 },
+                      ]);
+                      setAwaitingInput("resumo");
+                    } else if (awaitingInput === "resumo") {
+                      setUserData(prev => ({ ...prev, resumo: value }));
+                      setAwaitingInput(null);
+                      inject([
+                        { kind: "text", text: "Em que idioma você quer o livro?", delayMs: 500 },
+                        {
+                          kind: "options",
+                          options: [
+                            { id: "pt1", label: "PORTUGUÊS DO BRASIL", value: "portugues" },
+                            { id: "en1", label: "INGLÊS", value: "ingles" },
+                          ],
+                        },
+                      ]);
+                    } else if (awaitingInput === "autor") {
+                      setUserData(prev => ({ ...prev, autor: value }));
+                      setAwaitingInput(null);
+                      inject([
+                        { kind: "text", text: "Em que e-mail você deseja receber o livro?", delayMs: 500 },
+                      ]);
+                      setAwaitingInput("email");
+                    } else if (awaitingInput === "email") {
+                      setUserData(prev => ({ ...prev, email: value }));
+                      setAwaitingInput(null);
+                      inject([
+                        { kind: "text", text: "Perfeito! Vamos fazer o seguinte:", delayMs: 500 },
+                        { kind: "text", text: "Irei te enviar gratuitamente o seu planejamento do livro no Whatsapp e no seu email.", delayMs: 800 },
+                        { kind: "text", text: "Qual seu Whatsapp?", delayMs: 600 },
+                      ]);
+                      setAwaitingInput("whatsapp");
+                    } else if (awaitingInput === "whatsapp") {
+                      setUserData(prev => ({ ...prev, whatsapp: value }));
+                      setAwaitingInput(null);
+                      inject([
+                        { kind: "text", text: "Esses são seus dados, estão corretos?", delayMs: 600 },
+                        { kind: "text", text: `📋 Nome: ${userData.nome}`, delayMs: 500 },
+                        { kind: "text", text: `📚 Título: ${userData.titulo}`, delayMs: 500 },
+                        { kind: "text", text: `📝 Subtítulo: ${userData.subtitulo}`, delayMs: 500 },
+                        { kind: "text", text: `🌍 Idioma: ${userData.idioma}`, delayMs: 500 },
+                        { kind: "text", text: `👤 Autor: ${userData.autor}`, delayMs: 500 },
+                        { kind: "text", text: `📧 Email: ${userData.email}`, delayMs: 500 },
+                        { kind: "text", text: `📱 WhatsApp: ${value}`, delayMs: 500 },
+                        {
+                          kind: "options",
+                          options: [
+                            { id: "ok1", label: "Tudo certo. Vamos seguir!", value: "tudo_certo" },
+                            { id: "erro1", label: "Ops, tem um erro no meu contato", value: "tem_erro" },
+                          ],
+                        },
+                      ]);
+                    }
+
+                    setTextInputValue("");
+                  }}
+                >
+                  Enviar
+                </UIButton>
+                <UIButton
+                  ariaLabel="Pular pergunta"
+                  className="border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-100"
+                  onClick={() => {
+                    // Registrar como pulada sem valor
+                    if (awaitingTextQuestion) {
+                      setDynamicAnswers((prev) => ({ ...prev, [awaitingTextQuestion.id]: "" }));
+                    }
+                    setTextInputValue("");
+                    setAwaitingTextQuestion(null);
+                    inject([{ kind: 'text', text: 'Pergunta pulada. Tudo bem, vamos em frente.', delayMs: 300 }]);
+                    if (!promptNextUnansweredTextQuestion()) {
+                      continueAfterDynamicIfReady();
+                    }
+                  }}
+                >
+                  Pular pergunta
+                </UIButton>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </section>
+  );
+}
+
+// ---------- Dev‑only sanity tests ----------
+// Rodam apenas no navegador e fora de produção, não afetam o usuário final.
+if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
+  (window as unknown as { __CHAT_DEV_TESTED__: boolean }).__CHAT_DEV_TESTED__ = true;
+
+  // Teste 1: splitLines deve dividir por \n e \r\n
+  console.assert(
+    JSON.stringify(splitLines("a\nb\nc")) === JSON.stringify(["a", "b", "c"]),
+    "splitLines não dividiu por \n corretamente"
+  );
+  console.assert(
+    JSON.stringify(splitLines("a\r\nb\r\nc")) === JSON.stringify(["a", "b", "c"]),
+    "splitLines não dividiu por \r\n corretamente"
+  );
+
+  // Teste 2: makeToc deve conter 12 itens e manter quebras
+  const toc = makeToc({ tema: "Negócios", publico: "Iniciantes", tom: "Prático" });
+  const tocLines = splitLines(toc);
+  console.assert(
+    toc.includes("Sumário sugerido"),
+    "makeToc não gerou cabeçalho do sumário"
+  );
+  console.assert(
+    tocLines.length >= 12,
+    "makeToc deveria ter ao menos 12 linhas (capítulos)"
+  );
+}
