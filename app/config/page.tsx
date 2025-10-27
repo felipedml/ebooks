@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Edit2, Trash2, Play, ChevronUp, ChevronDown, Activity, Webhook, Palette, Upload, Copy, Link2, Check } from 'lucide-react';
+import { Plus, Edit2, Trash2, Play, ChevronUp, ChevronDown, Activity, Webhook, Palette, Upload, Copy, Link2, Check, LogOut, Home } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import type { FlowStep, TextStep, ButtonStep, InputStep, OptionsStep, AIStep, AudioStep, CanvaStep, CanvaAIStep, CanvaDesignOption } from '@/app/src/inngest/functions/flow-steps';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,10 +60,12 @@ const GEMINI_MODELS = [
 ];
 
 export default function ConfigInnguestPage() {
+  const router = useRouter();
   const [flows, setFlows] = useState<Flow[]>([]);
   const [selectedFlow, setSelectedFlow] = useState<Flow | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [loggingOut, setLoggingOut] = useState(false);
 
   // Modal states
   const [flowModal, setFlowModal] = useState(false);
@@ -1360,13 +1363,45 @@ export default function ConfigInnguestPage() {
     });
   };
 
+  const handleLogout = async () => {
+    if (!confirm('Deseja realmente sair?')) return;
+    
+    setLoggingOut(true);
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      router.push('/login');
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+      setLoggingOut(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#FAFAF9] p-6 md:p-12">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-12">
-          <h1 className="text-4xl font-medium text-[#1a1a1a] mb-3">Configuração de Fluxos</h1>
-          <p className="text-[#6B6B6B] text-base">Configure e gerencie seus fluxos de conversação</p>
+        {/* Header with navigation */}
+        <div className="flex justify-between items-start mb-12">
+          <div>
+            <h1 className="text-4xl font-medium text-[#1a1a1a] mb-3">Configuração de Fluxos</h1>
+            <p className="text-[#6B6B6B] text-base">Configure e gerencie seus fluxos de conversação</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => router.push('/')}
+              className="flex items-center gap-2 px-4 py-2 text-gray-700 hover:text-gray-900 hover:bg-gray-200 rounded-lg transition-colors"
+            >
+              <Home className="h-4 w-4" />
+              Início
+            </button>
+            <button
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="flex items-center gap-2 px-4 py-2 text-gray-700 hover:text-gray-900 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <LogOut className="h-4 w-4" />
+              {loggingOut ? 'Saindo...' : 'Sair'}
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

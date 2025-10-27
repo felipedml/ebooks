@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Play, Settings, Link2 } from "lucide-react";
+import { Play, Settings, Link2, LogOut } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 interface Flow {
   id: number;
@@ -11,8 +12,10 @@ interface Flow {
 }
 
 export default function HomePage() {
+  const router = useRouter();
   const [flows, setFlows] = useState<Flow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
     loadFlows();
@@ -33,6 +36,19 @@ export default function HomePage() {
     }
   };
 
+  const handleLogout = async () => {
+    if (!confirm('Deseja realmente sair?')) return;
+    
+    setLoggingOut(true);
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      router.push('/login');
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+      setLoggingOut(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-100">
@@ -47,6 +63,18 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-gray-100 p-8">
       <div className="max-w-4xl mx-auto">
+        {/* Header with Logout */}
+        <div className="flex justify-end mb-4">
+          <button
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className="flex items-center gap-2 px-4 py-2 text-gray-700 hover:text-gray-900 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+          >
+            <LogOut className="h-4 w-4" />
+            {loggingOut ? 'Saindo...' : 'Sair'}
+          </button>
+        </div>
+
         <div className="text-center mb-12">
           <h1 className="text-4xl font-bold text-gray-800 mb-4">Fluxos Disponíveis</h1>
           <p className="text-gray-600">
