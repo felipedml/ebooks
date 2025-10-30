@@ -14,9 +14,12 @@ export async function OPTIONS(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   const origin = request.headers.get('origin');
+  console.log('[API /steps GET] 🔍 Iniciando...');
+  
   try {
-    const url = new URL(request.url);
-    const fluxoId = url.searchParams.get('fluxoId');
+    const { searchParams } = new URL(request.url);
+    const fluxoId = searchParams.get('fluxoId');
+    console.log('[API /steps GET] fluxoId:', fluxoId);
 
     if (!fluxoId) {
       return corsResponse(
@@ -28,10 +31,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    console.log('[API /steps GET] Executando query para fluxoId:', parseInt(fluxoId));
     const stepsFluxo = await db.select()
       .from(steps)
       .where(eq(steps.fluxoId, parseInt(fluxoId)))
       .orderBy(asc(steps.ordem));
+    
+    console.log('[API /steps GET] ✅ Steps encontrados:', stepsFluxo.length);
 
     return corsResponse(
       {

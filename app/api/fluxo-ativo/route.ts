@@ -11,21 +11,31 @@ export async function OPTIONS(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   const origin = request.headers.get('origin');
+  console.log('[API /fluxo-ativo] 🔍 Iniciando busca de fluxo ativo...');
+  console.log('[API /fluxo-ativo] DATABASE_URL:', process.env.DATABASE_URL ? '✅ Configurado' : '❌ Não configurado');
+  console.log('[API /fluxo-ativo] Environment:', process.env.NODE_ENV);
+  
   try {
-    console.log('Buscando fluxo ativo...');
+    console.log('[API /fluxo-ativo] Verificando tabela fluxos...');
     
     // Verificar se a tabela existe fazendo uma consulta mais simples
+    console.log('[API /fluxo-ativo] Executando SELECT * FROM fluxos LIMIT 5...');
     const todosFluxos = await db.select().from(fluxos).limit(5);
-    console.log('Todos os fluxos encontrados:', todosFluxos.length);
+    console.log('[API /fluxo-ativo] ✅ Todos os fluxos encontrados:', todosFluxos.length);
+    console.log('[API /fluxo-ativo] Fluxos:', JSON.stringify(todosFluxos, null, 2));
 
     // Pegar o fluxo ativo mais recente
+    console.log('[API /fluxo-ativo] Buscando fluxos com ativo=true...');
     const ativoMaisRecente = await db.select()
       .from(fluxos)
       .where(eq(fluxos.ativo, true))
       .orderBy(desc(fluxos.createdAt))
       .limit(1);
 
-    console.log('Fluxos ativos encontrados:', ativoMaisRecente.length);
+    console.log('[API /fluxo-ativo] Fluxos ativos encontrados:', ativoMaisRecente.length);
+    if (ativoMaisRecente.length > 0) {
+      console.log('[API /fluxo-ativo] Fluxo ativo:', JSON.stringify(ativoMaisRecente[0], null, 2));
+    }
 
     if (ativoMaisRecente.length === 0) {
       return corsResponse(
