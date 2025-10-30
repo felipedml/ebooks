@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { sql } from 'drizzle-orm';
 import { corsResponse, handleCorsPreFlight } from '@/lib/cors';
 
 // Handle OPTIONS for CORS preflight
@@ -24,8 +25,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Try a simple query
-    await db.execute('SELECT 1');
+    // Try a simple query using Drizzle's sql
+    await db.run(sql`SELECT 1`);
     
     return corsResponse(
       {
