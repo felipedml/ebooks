@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
     }
     
     // Get all flows
-    let todosFluxos;
+    let todosFluxos: typeof fluxos.$inferSelect[];
     try {
       console.log(`[API /fluxos GET] ${requestId} - Executando query Drizzle...`);
       const startTime = Date.now();
@@ -99,15 +99,14 @@ export async function GET(request: NextRequest) {
       console.error(`[API /fluxos GET] ${requestId} - ❌ Drizzle query falhou:`, drizzleError);
       console.error(`[API /fluxos GET] ${requestId} - Tentando fallback SQL raw...`);
       
-      // Fallback to raw SQL
-      const rawResult = await db.run(sql`
-        SELECT id, nome, descricao, ativo, created_at, updated_at 
+      // Fallback to raw SQL - use all() for SELECT queries
+      todosFluxos = await db.all(sql`
+        SELECT id, nome, descricao, ativo, created_at as createdAt, updated_at as updatedAt
         FROM fluxos 
         ORDER BY created_at DESC
-      `);
+      `) as typeof fluxos.$inferSelect[];
       
-      console.log(`[API /fluxos GET] ${requestId} - ✅ Raw SQL executado`);
-      todosFluxos = rawResult.rows || [];
+      console.log(`[API /fluxos GET] ${requestId} - ✅ Raw SQL executado com ${todosFluxos.length} resultados`);
     }
     
     console.log(`[API /fluxos GET] ${requestId} - ✅ Total de fluxos encontrados: ${todosFluxos.length}`);
