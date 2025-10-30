@@ -4,6 +4,24 @@ import { fluxos } from '@/lib/db/schema';
 import { sql } from 'drizzle-orm';
 import { corsResponse, handleCorsPreFlight } from '@/lib/cors';
 
+interface DebugTest {
+  success: boolean;
+  result?: unknown;
+  error?: string;
+  tables?: unknown;
+  columns?: unknown;
+  data?: unknown;
+  count?: number;
+  stack?: string;
+}
+
+interface DebugInfo {
+  timestamp: string;
+  environment: string | undefined;
+  databaseConfigured: boolean;
+  tests: Record<string, DebugTest>;
+}
+
 export async function OPTIONS(request: NextRequest) {
   return handleCorsPreFlight(request);
 }
@@ -15,7 +33,7 @@ export async function GET(request: NextRequest) {
   console.log('[API /debug] NODE_ENV:', process.env.NODE_ENV);
   console.log('[API /debug] DATABASE_URL:', process.env.DATABASE_URL ? '✅ Configurado' : '❌ Não configurado');
   
-  const debugInfo: any = {
+  const debugInfo: DebugInfo = {
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV,
     databaseConfigured: !!process.env.DATABASE_URL,

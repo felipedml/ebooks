@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { inngest } from '@/app/src/inngest/client';
 import { corsResponse, handleCorsPreFlight } from '@/lib/cors';
 

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { processAIStep } from '@/lib/ai-processor';
 import { corsResponse, handleCorsPreFlight } from '@/lib/cors';
 

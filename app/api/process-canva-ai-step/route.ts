@@ -3,12 +3,7 @@
  * POST /api/process-canva-ai-step
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { generateObject } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { z } from 'zod';
-import { getApiKey } from '@/lib/get-api-key';
+import { NextRequest } from 'next/server';
 import type { CanvaDesignOption } from '@/app/src/inngest/functions/flow-steps';
 import { corsResponse, handleCorsPreFlight } from '@/lib/cors';
 
