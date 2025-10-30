@@ -4,9 +4,21 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { generateObject } from 'ai';
+import { createOpenAI } from '@ai-sdk/openai';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { z } from 'zod';
+import { getApiKey } from '@/lib/get-api-key';
 import type { CanvaDesignOption } from '@/app/src/inngest/functions/flow-steps';
+import { corsResponse, handleCorsPreFlight } from '@/lib/cors';
+
+// Handle OPTIONS for CORS preflight
+export async function OPTIONS(request: NextRequest) {
+  return handleCorsPreFlight(request);
+}
 
 export async function POST(request: NextRequest) {
+  const origin = request.headers.get('origin');
   try {
     const body = await request.json();
     const {
@@ -22,16 +34,16 @@ export async function POST(request: NextRequest) {
 
     // Validate required fields
     if (!apiKeyId) {
-      return NextResponse.json(
+      return corsResponse(
         { success: false, error: 'API key ID is required' },
-        { status: 400 }
+        { status: 400, origin }
       );
     }
 
     if (!availableDesigns || availableDesigns.length === 0) {
-      return NextResponse.json(
+      return corsResponse(
         { success: false, error: 'No designs available to select from' },
-        { status: 400 }
+        { status: 400, origin }
       );
     }
 
@@ -39,9 +51,9 @@ export async function POST(request: NextRequest) {
     const { getApiKey } = await import('@/lib/get-api-key');
     const apiKey = await getApiKey(parseInt(apiKeyId));
     if (!apiKey) {
-      return NextResponse.json(
+      return corsResponse(
         { success: false, error: 'API key not found or invalid' },
-        { status: 404 }
+        { status: 404, origin }
       );
     }
 
@@ -119,26 +131,29 @@ Select the most appropriate design from the list and respond with the JSON forma
       (d) => d.id === selectedDesign.selectedId
     );
 
-    return NextResponse.json({
-      success: true,
-      output: {
-        type: 'canva_ai_result',
-        selectedDesign: {
-          id: selectedDesign.selectedId,
-          title: selectedDesign.selectedTitle,
-          thumbnailUrl: chosenDesign?.thumbnailUrl,
-          reasoning: selectedDesign.reasoning
+    return corsResponse(
+      {
+        success: true,
+        output: {
+          type: 'canva_ai_result',
+          selectedDesign: {
+            id: selectedDesign.selectedId,
+            title: selectedDesign.selectedTitle,
+            thumbnailUrl: chosenDesign?.thumbnailUrl,
+            reasoning: selectedDesign.reasoning
+          }
         }
-      }
-    });
+      },
+      { origin }
+    );
   } catch (error) {
     console.error('[Canva AI API] Error:', error);
-    return NextResponse.json(
+    return corsResponse(
       {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to process Canva AI step'
       },
-      { status: 500 }
+      { status: 500, origin }
     );
   }
 }

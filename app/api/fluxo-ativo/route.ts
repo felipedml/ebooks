@@ -1,9 +1,16 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { fluxos } from '@/lib/db/schema';
 import { eq, desc } from 'drizzle-orm';
+import { corsResponse, handleCorsPreFlight } from '@/lib/cors';
 
-export async function GET() {
+// Handle OPTIONS for CORS preflight
+export async function OPTIONS(request: NextRequest) {
+  return handleCorsPreFlight(request);
+}
+
+export async function GET(request: NextRequest) {
+  const origin = request.headers.get('origin');
   try {
     console.log('Buscando fluxo ativo...');
     
@@ -21,21 +28,30 @@ export async function GET() {
     console.log('Fluxos ativos encontrados:', ativoMaisRecente.length);
 
     if (ativoMaisRecente.length === 0) {
-      return NextResponse.json({
-        success: false,
-        message: 'Nenhum fluxo ativo encontrado',
-        totalFluxos: todosFluxos.length
-      });
+      return corsResponse(
+        {
+          success: false,
+          message: 'Nenhum fluxo ativo encontrado',
+          totalFluxos: todosFluxos.length
+        },
+        { origin }
+      );
     }
 
     console.log('Fluxo ativo encontrado:', ativoMaisRecente[0].nome);
-    return NextResponse.json({ success: true, fluxo: ativoMaisRecente[0] });
+    return corsResponse(
+      { success: true, fluxo: ativoMaisRecente[0] },
+      { origin }
+    );
   } catch (error) {
-    console.error('Erro detalhado ao buscar fluxo ativo:', error);
-    return NextResponse.json({
-      success: false,
-      error: 'Erro ao conectar com o banco de dados',
-      details: error instanceof Error ? error.message : 'Erro desconhecido'
-    }, { status: 500 });
+    console.error('[API] Erro detalhado ao buscar fluxo ativo:', error);
+    return corsResponse(
+      {
+        success: false,
+        error: 'Erro ao conectar com o banco de dados',
+        details: error instanceof Error ? error.message : 'Erro desconhecido'
+      },
+      { status: 500, origin }
+    );
   }
 }

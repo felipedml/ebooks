@@ -2,16 +2,26 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { sessoes } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import { corsResponse, handleCorsPreFlight } from '@/lib/cors';
+
+// Handle OPTIONS for CORS preflight
+export async function OPTIONS(request: NextRequest) {
+  return handleCorsPreFlight(request);
+}
 
 export async function POST(request: NextRequest) {
+  const origin = request.headers.get('origin');
   try {
     const body = await request.json();
     const { sessionId, fluxoId, userId, metadata } = body;
 
     if (!sessionId || !fluxoId) {
-      return NextResponse.json(
-        { error: 'sessionId e fluxoId são obrigatórios' },
-        { status: 400 }
+      return corsResponse(
+        { 
+          success: false,
+          error: 'sessionId e fluxoId são obrigatórios' 
+        },
+        { status: 400, origin }
       );
     }
 
@@ -25,11 +35,14 @@ export async function POST(request: NextRequest) {
     // Se já existe, retornar a existente
     if (sessaoExistente.length > 0) {
       console.log('[API] Session already exists, returning existing:', sessaoExistente[0]);
-      return NextResponse.json({
-        success: true,
-        sessao: sessaoExistente[0],
-        existing: true,
-      });
+      return corsResponse(
+        {
+          success: true,
+          sessao: sessaoExistente[0],
+          existing: true,
+        },
+        { origin }
+      );
     }
 
     // Criar nova sessão
@@ -45,11 +58,14 @@ export async function POST(request: NextRequest) {
 
       console.log('[API] New session created:', novaSessao[0]);
 
-      return NextResponse.json({
-        success: true,
-        sessao: novaSessao[0],
-        existing: false,
-      });
+      return corsResponse(
+        {
+          success: true,
+          sessao: novaSessao[0],
+          existing: false,
+        },
+        { origin }
+      );
     } catch (insertError: unknown) {
       // Log para debug
       console.log('[API] Insert error caught:', (insertError as { code?: string }).code, (insertError as { message?: string }).message);
@@ -71,11 +87,14 @@ export async function POST(request: NextRequest) {
         
         if (sessaoExistente.length > 0) {
           console.log('[API] Returning existing session from race condition handler');
-          return NextResponse.json({
-            success: true,
-            sessao: sessaoExistente[0],
-            existing: true,
-          });
+          return corsResponse(
+            {
+              success: true,
+              sessao: sessaoExistente[0],
+              existing: true,
+            },
+            { origin }
+          );
         }
       }
       
@@ -83,10 +102,14 @@ export async function POST(request: NextRequest) {
       throw insertError; // Se não for race condition, propagar erro
     }
   } catch (error) {
-    console.error('Erro ao criar sessão:', error);
-    return NextResponse.json(
-      { error: 'Erro ao criar sessão' },
-      { status: 500 }
+    console.error('[API] Erro ao criar sessão:', error);
+    return corsResponse(
+      { 
+        success: false,
+        error: 'Erro ao criar sessão',
+        details: error instanceof Error ? error.message : String(error)
+      },
+      { status: 500, origin }
     );
   }
 }

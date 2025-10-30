@@ -3,18 +3,28 @@ import { db } from '@/lib/db';
 import { steps } from '@/lib/db/schema';
 import { eq, asc, desc } from 'drizzle-orm';
 import type { InferSelectModel } from 'drizzle-orm';
+import { corsResponse, handleCorsPreFlight } from '@/lib/cors';
 
 type Step = InferSelectModel<typeof steps>;
 
+// Handle OPTIONS for CORS preflight
+export async function OPTIONS(request: NextRequest) {
+  return handleCorsPreFlight(request);
+}
+
 export async function GET(request: NextRequest) {
+  const origin = request.headers.get('origin');
   try {
     const url = new URL(request.url);
     const fluxoId = url.searchParams.get('fluxoId');
 
     if (!fluxoId) {
-      return NextResponse.json(
-        { error: 'fluxoId é obrigatório' },
-        { status: 400 }
+      return corsResponse(
+        { 
+          success: false,
+          error: 'fluxoId é obrigatório' 
+        },
+        { status: 400, origin }
       );
     }
 
@@ -23,24 +33,29 @@ export async function GET(request: NextRequest) {
       .where(eq(steps.fluxoId, parseInt(fluxoId)))
       .orderBy(asc(steps.ordem));
 
-    return NextResponse.json({
-      success: true,
-      steps: stepsFluxo
-    });
+    return corsResponse(
+      {
+        success: true,
+        steps: stepsFluxo
+      },
+      { origin }
+    );
   } catch (error) {
-    console.error('Erro ao buscar steps:', error);
-    return NextResponse.json(
+    console.error('[API] Erro ao buscar steps:', error);
+    return corsResponse(
       { 
+        success: false,
         error: 'Erro interno do servidor ao buscar steps',
         details: error instanceof Error ? error.message : String(error),
         stack: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.stack : undefined) : undefined
       },
-      { status: 500 }
+      { status: 500, origin }
     );
   }
 }
 
 export async function POST(request: NextRequest) {
+  const origin = request.headers.get('origin');
   try {
     const body = await request.json();
     const { fluxoId, fluxo_id, ordem, tipo, conteudo, proximoStep, ativo } = body;
@@ -49,9 +64,12 @@ export async function POST(request: NextRequest) {
     const flowId = fluxoId || fluxo_id;
 
     if (!flowId || !tipo || !conteudo) {
-      return NextResponse.json(
-        { error: 'fluxoId, tipo e conteudo são obrigatórios' },
-        { status: 400 }
+      return corsResponse(
+        { 
+          success: false,
+          error: 'fluxoId, tipo e conteudo são obrigatórios' 
+        },
+        { status: 400, origin }
       );
     }
 
@@ -76,34 +94,42 @@ export async function POST(request: NextRequest) {
       ativo: ativo ?? true,
     }).returning();
 
-    return NextResponse.json({
-      success: true,
-      step: novoStep,
-      message: 'Step criado com sucesso!'
-    });
+    return corsResponse(
+      {
+        success: true,
+        step: novoStep,
+        message: 'Step criado com sucesso!'
+      },
+      { origin }
+    );
 
   } catch (error) {
-    console.error('Erro ao criar step:', error);
-    return NextResponse.json(
+    console.error('[API] Erro ao criar step:', error);
+    return corsResponse(
       { 
+        success: false,
         error: 'Erro interno do servidor ao criar step',
         details: error instanceof Error ? error.message : String(error),
         stack: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.stack : undefined) : undefined
       },
-      { status: 500 }
+      { status: 500, origin }
     );
   }
 }
 
 export async function PUT(request: NextRequest) {
+  const origin = request.headers.get('origin');
   try {
     const body = await request.json();
     const { id, ordem, tipo, conteudo, condicoes, proximoStep, ativo, move, fluxoId } = body;
 
     if (!id) {
-      return NextResponse.json(
-        { error: 'ID é obrigatório' },
-        { status: 400 }
+      return corsResponse(
+        { 
+          success: false,
+          error: 'ID é obrigatório' 
+        },
+        { status: 400, origin }
       );
     }
 
@@ -112,7 +138,10 @@ export async function PUT(request: NextRequest) {
       const stepAtualArr = await db.select().from(steps).where(eq(steps.id, id)).limit(1);
       const stepAtual = stepAtualArr[0];
       if (!stepAtual) {
-        return NextResponse.json({ error: 'Step não encontrado' }, { status: 404 });
+        return corsResponse(
+          { success: false, error: 'Step não encontrado' },
+          { status: 404, origin }
+        );
       }
 
       const alvoOrdem = move === 'up' ? (stepAtual.ordem ?? 0) - 1 : (stepAtual.ordem ?? 0) + 1;
@@ -125,14 +154,20 @@ export async function PUT(request: NextRequest) {
       const vizinho = vizinhoArr.find((s: Step) => (s.ordem ?? 0) === alvoOrdem);
       if (!vizinho) {
         // Nada a fazer se não existir vizinho nessa direção
-        return NextResponse.json({ success: true, message: 'Borda alcançada, sem reordenação' });
+        return corsResponse(
+          { success: true, message: 'Borda alcançada, sem reordenação' },
+          { origin }
+        );
       }
 
       // Trocar as ordens
       await db.update(steps).set({ ordem: vizinho.ordem }).where(eq(steps.id, stepAtual.id));
       await db.update(steps).set({ ordem: stepAtual.ordem }).where(eq(steps.id, vizinho.id));
 
-      return NextResponse.json({ success: true, message: 'Ordem atualizada com sucesso' });
+      return corsResponse(
+        { success: true, message: 'Ordem atualizada com sucesso' },
+        { origin }
+      );
     }
 
     const [stepAtualizado] = await db.update(steps)
@@ -149,41 +184,52 @@ export async function PUT(request: NextRequest) {
       .returning();
 
     if (!stepAtualizado) {
-      return NextResponse.json(
-        { error: 'Step não encontrado' },
-        { status: 404 }
+      return corsResponse(
+        { 
+          success: false,
+          error: 'Step não encontrado' 
+        },
+        { status: 404, origin }
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      step: stepAtualizado,
-      message: 'Step atualizado com sucesso!'
-    });
+    return corsResponse(
+      {
+        success: true,
+        step: stepAtualizado,
+        message: 'Step atualizado com sucesso!'
+      },
+      { origin }
+    );
 
   } catch (error) {
-    console.error('Erro ao atualizar step:', error);
-    return NextResponse.json(
+    console.error('[API] Erro ao atualizar step:', error);
+    return corsResponse(
       { 
+        success: false,
         error: 'Erro interno do servidor ao atualizar step',
         details: error instanceof Error ? error.message : String(error),
         stack: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.stack : undefined) : undefined
       },
-      { status: 500 }
+      { status: 500, origin }
     );
   }
 }
 
 export async function DELETE(request: NextRequest) {
+  const origin = request.headers.get('origin');
   try {
     const url = new URL(request.url);
     const id = url.searchParams.get('id');
     const fluxoId = url.searchParams.get('fluxoId');
 
     if (!id && !fluxoId) {
-      return NextResponse.json(
-        { error: 'ID ou fluxoId é obrigatório' },
-        { status: 400 }
+      return corsResponse(
+        { 
+          success: false,
+          error: 'ID ou fluxoId é obrigatório' 
+        },
+        { status: 400, origin }
       );
     }
 
@@ -191,29 +237,36 @@ export async function DELETE(request: NextRequest) {
       // Delete all steps from a specific flow
       await db.delete(steps).where(eq(steps.fluxoId, parseInt(fluxoId)));
 
-      return NextResponse.json({
-        success: true,
-        message: 'Todos os steps do fluxo foram deletados!'
-      });
+      return corsResponse(
+        {
+          success: true,
+          message: 'Todos os steps do fluxo foram deletados!'
+        },
+        { origin }
+      );
     } else if (id) {
       // Delete a specific step
       await db.delete(steps).where(eq(steps.id, parseInt(id)));
 
-      return NextResponse.json({
-        success: true,
-        message: 'Step deletado com sucesso!'
-      });
+      return corsResponse(
+        {
+          success: true,
+          message: 'Step deletado com sucesso!'
+        },
+        { origin }
+      );
     }
 
   } catch (error) {
-    console.error('Erro ao deletar step:', error);
-    return NextResponse.json(
+    console.error('[API] Erro ao deletar step:', error);
+    return corsResponse(
       { 
+        success: false,
         error: 'Erro interno do servidor ao deletar step',
         details: error instanceof Error ? error.message : String(error),
         stack: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.stack : undefined) : undefined
       },
-      { status: 500 }
+      { status: 500, origin }
     );
   }
 }
