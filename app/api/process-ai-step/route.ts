@@ -20,7 +20,6 @@ export async function POST(request: NextRequest) {
       outputType,
       variables,
       temperature,
-      maxTokens,
     } = body;
 
     // Validate required fields
@@ -40,7 +39,6 @@ export async function POST(request: NextRequest) {
       outputType,
       variables: variables || {},
       temperature,
-      maxTokens,
     });
 
     return corsResponse(

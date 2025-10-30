@@ -23,29 +23,27 @@ const aiOutputSchema = z.object({
 
 export type AIOutput = z.infer<typeof aiOutputSchema>;
 
-interface ProcessAIStepParams {
-  provider: 'openai' | 'gemini';
-  apiKeyId?: number;
-  model?: string;
-  prompt: string;
-  outputType: 'text' | 'buttons' | 'input' | 'options';
-  variables: Record<string, unknown>;
-  temperature?: number;
-  maxTokens?: number;
-}
+ 
 /**
  * Processa um step de AI e retorna output estruturado
  */
 export async function processAIStep({
   provider,
-  apiKeyId,
   model,
   prompt,
+  temperature,
+  apiKeyId,
   outputType,
-  variables,
-  temperature = 0.7,
-  maxTokens,
-}: ProcessAIStepParams): Promise<AIOutput> {
+  variables
+}: {
+  provider: 'openai' | 'gemini';
+  model?: string;
+  prompt: string;
+  temperature?: number;
+  apiKeyId?: number;
+  outputType: 'text' | 'buttons' | 'input' | 'options';
+  variables?: Record<string, unknown>;
+}) {
   // Buscar API key do banco ou fallback para env var
   let apiKey: string | null;
   
@@ -60,9 +58,11 @@ export async function processAIStep({
   }
   // Replace variables in prompt
   let processedPrompt = prompt;
-  for (const [key, value] of Object.entries(variables)) {
-    const regex = new RegExp(`{${key}}`, 'g');
-    processedPrompt = processedPrompt.replace(regex, String(value));
+  if (variables) {
+    for (const [key, value] of Object.entries(variables)) {
+      const regex = new RegExp(`{${key}}`, 'g');
+      processedPrompt = processedPrompt.replace(regex, String(value));
+    }
   }
   
 

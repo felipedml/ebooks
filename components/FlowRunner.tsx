@@ -9,10 +9,46 @@ import type {
   OptionsStep, 
   AIStep, 
   AudioStep, 
-  CanvaStep, 
   CanvaAIStep, 
   CanvaDesignOption 
 } from '@/app/src/inngest/functions/flow-steps';
+
+// Phone mask function for Brazilian format
+const formatPhoneNumber = (value: string): string => {
+  // Remove all non-numeric characters except the leading +
+  let numbers = value.replace(/[^\d+]/g, '');
+  
+  // If it doesn't start with +, assume it's Brazilian and add +55
+  if (!numbers.startsWith('+')) {
+    numbers = numbers.replace(/\D/g, '');
+    if (numbers.length > 0) {
+      numbers = '55' + numbers;
+    }
+  } else {
+    // Remove the + for processing, we'll add it back
+    numbers = numbers.substring(1).replace(/\D/g, '');
+  }
+  
+  // Apply Brazilian phone format: +55 (XX) XXXXX-XXXX or +55 (XX) XXXX-XXXX
+  if (numbers.length === 0) {
+    return '';
+  } else if (numbers.length <= 2) {
+    return `+${numbers}`;
+  } else if (numbers.length <= 4) {
+    // +55 (XX
+    return `+${numbers.slice(0, 2)} (${numbers.slice(2)}`;
+  } else if (numbers.length <= 9) {
+    // +55 (XX) XXXX
+    return `+${numbers.slice(0, 2)} (${numbers.slice(2, 4)}) ${numbers.slice(4)}`;
+  } else if (numbers.length <= 10) {
+    // +55 (XX) XXXX-XXXX (old format - 8 digit number)
+    return `+${numbers.slice(0, 2)} (${numbers.slice(2, 4)}) ${numbers.slice(4, 8)}-${numbers.slice(8)}`;
+  } else {
+    // +55 (XX) XXXXX-XXXX (new format - 9 digit number with 9 in front)
+    return `+${numbers.slice(0, 2)} (${numbers.slice(2, 4)}) ${numbers.slice(4, 9)}-${numbers.slice(9, 13)}`;
+  }
+};
+
 interface FlowRunnerProps {
   flowId: number;
   onComplete?: (responses: Record<string, unknown>) => void;
@@ -38,14 +74,13 @@ interface ChatMessage {
   timestamp: string;
 }
 
-export default function FlowRunner({ flowId, onComplete }: FlowRunnerProps) {
+export default function FlowRunner({ flowId }: FlowRunnerProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
   const [dbSessionId, setDbSessionId] = useState<number | null>(null);
   const [sessionCreating, setSessionCreating] = useState(false); // Flag para evitar criação dupla
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [flowSteps, setFlowSteps] = useState<FlowStep[]>([]);
-  const [responses] = useState<Record<string, unknown>>({});
 
   // Use useRef to persist data across re-renders
   const variablesRef = useRef<Record<string, string>>({});
@@ -989,11 +1024,57 @@ export default function FlowRunner({ flowId, onComplete }: FlowRunnerProps) {
     console.log('[FlowRunner] Interactive message added, currentStepIndex set to:', index);
   };
 
-  const executeWebhook = async (webhook: { url?: string; method?: string; headers?: Record<string, string> }, data: Record<string, unknown>) => {
+  const executeWebhook = async (
+    webhook: { 
+      url?: string; 
+      method?: string; 
+      headers?: Record<string, string>;
+      bodyFields?: Array<{ key: string; value: string; type: 'static' | 'variable'; variableName?: string }>;
+      includeSessionData?: boolean;
+      includeAllVariables?: boolean;
+    }, 
+    data: Record<string, unknown>
+  ) => {
     if (!webhook?.url) return;
 
     try {
       console.log('[FlowRunner] Executing webhook:', webhook.url);
+
+      // Build custom body
+      const customBody: Record<string, unknown> = {};
+
+      // Add custom fields
+      if (webhook.bodyFields && webhook.bodyFields.length > 0) {
+        webhook.bodyFields.forEach(field => {
+          if (field.type === 'static') {
+            // Static value
+            customBody[field.key] = field.value;
+          } else if (field.type === 'variable' && field.variableName) {
+            // Variable value - get from variablesRef
+            customBody[field.key] = variablesRef.current[field.variableName] || '';
+          }
+        });
+      }
+
+      // Include session data if enabled (default true for backward compatibility)
+      if (webhook.includeSessionData !== false) {
+        customBody.sessionId = sessionId;
+        customBody.flowId = flowId;
+        customBody.timestamp = new Date().toISOString();
+      }
+
+      // Include all collected variables if enabled
+      if (webhook.includeAllVariables) {
+        customBody.variables = { ...variablesRef.current };
+      }
+
+      // Merge with event data
+      const finalBody = {
+        ...customBody,
+        ...data
+      };
+
+      console.log('[FlowRunner] Webhook body:', finalBody);
 
       const response = await fetch(webhook.url, {
         method: webhook.method || 'POST',
@@ -1001,12 +1082,7 @@ export default function FlowRunner({ flowId, onComplete }: FlowRunnerProps) {
           'Content-Type': 'application/json',
           ...(webhook.headers || {})
         },
-        body: JSON.stringify({
-          ...data,
-          sessionId,
-          flowId,
-          timestamp: new Date().toISOString()
-        })
+        body: JSON.stringify(finalBody)
       });
 
       if (!response.ok) {
@@ -1052,7 +1128,16 @@ export default function FlowRunner({ flowId, onComplete }: FlowRunnerProps) {
     console.log('[FlowRunner] Button/Option saved to variables:', variablesRef.current);
 
     // Execute webhook if configured
-    const stepWithWebhook = currentStep as { webhook?: { url?: string; method?: string; headers?: Record<string, string> } };
+    const stepWithWebhook = currentStep as { 
+      webhook?: { 
+        url?: string; 
+        method?: string; 
+        headers?: Record<string, string>;
+        bodyFields?: Array<{ key: string; value: string; type: 'static' | 'variable'; variableName?: string }>;
+        includeSessionData?: boolean;
+        includeAllVariables?: boolean;
+      } 
+    };
     if (stepWithWebhook?.webhook) {
       await executeWebhook(stepWithWebhook.webhook, {
         type: isOptionStep ? 'option_selected' : 'button_click',
@@ -1357,10 +1442,17 @@ export default function FlowRunner({ flowId, onComplete }: FlowRunnerProps) {
                             />
                           ) : (
                             <input
-                              type={message.input.inputType || 'text'}
+                              type={message.input.inputType === 'tel' ? 'tel' : message.input.inputType || 'text'}
                               value={inputValue}
-                              onChange={(e) => setInputValue(e.target.value)}
-                              placeholder={message.input.placeholder || 'Digite aqui...'}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                if (message.input?.inputType === 'tel') {
+                                  setInputValue(formatPhoneNumber(value));
+                                } else {
+                                  setInputValue(value);
+                                }
+                              }}
+                              placeholder={message.input.placeholder || (message.input.inputType === 'tel' ? '+55 (11) 91234-5678' : 'Digite aqui...')}
                               className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600"
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {

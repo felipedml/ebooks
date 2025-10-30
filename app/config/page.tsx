@@ -102,7 +102,6 @@ export default function ConfigInnguestPage() {
   // Audio recording states
   const [isRecording, setIsRecording] = useState(false);
   const [audioRecorder, setAudioRecorder] = useState<MediaRecorder | null>(null);
-  const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
   const [isTTSGenerating, setIsTTSGenerating] = useState(false);
   const [ttsText, setTtsText] = useState('');
   const [showTTSModal, setShowTTSModal] = useState(false);
@@ -1045,11 +1044,12 @@ export default function ConfigInnguestPage() {
     if (!selectedFlow) return [];
 
     const variables: Array<{ name: string; stepIndex: number; stepType: string }> = [];
+    const maxIndex = editingStepIndex === null ? selectedFlow.steps!.length : editingStepIndex;
 
-    selectedFlow.steps?.forEach((step, index) => {
-      if (step.type === 'input' && (step as InputStep).variable) {
+    selectedFlow.steps?.slice(0, maxIndex).forEach((step: FlowStep, index: number) => {
+      if (step.type === 'input' && step.variable) {
         variables.push({
-          name: (step as InputStep).variable!,
+          name: step.variable,
           stepIndex: index,
           stepType: 'input'
         });
@@ -2302,13 +2302,13 @@ export default function ConfigInnguestPage() {
                     </button>
                   </div>
 
-                  {/* Webhook Config for Button */}
+                  {/* Webhook Config for Button - ADVANCED */}
                   <div className="border-t pt-3">
                     <label className="block text-sm font-medium mb-1">
                       <Webhook className="inline-block w-4 h-4 mr-1" />
                       Webhook (opcional)
                     </label>
-                    <div className="space-y-2">
+                    <div className="space-y-3 overflow-x-hidden">
                       <input
                         value={(stepContent as ButtonStep).webhook?.url || ''}
                         onChange={(e) => updateStepContent({
@@ -2338,8 +2338,193 @@ export default function ConfigInnguestPage() {
                             <option value="PATCH">PATCH</option>
                             <option value="DELETE">DELETE</option>
                           </select>
+
+                          {/* Options */}
+                          <div className="bg-gray-50 p-3 rounded space-y-2">
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={(stepContent as ButtonStep).webhook?.includeSessionData !== false}
+                                onChange={(e) => updateStepContent({
+                                  webhook: {
+                                    ...(stepContent as ButtonStep).webhook,
+                                    includeSessionData: e.target.checked
+                                  }
+                                })}
+                                className="rounded"
+                              />
+                              Incluir dados da sessão (sessionId, flowId, timestamp)
+                            </label>
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={(stepContent as ButtonStep).webhook?.includeAllVariables || false}
+                                onChange={(e) => updateStepContent({
+                                  webhook: {
+                                    ...(stepContent as ButtonStep).webhook,
+                                    includeAllVariables: e.target.checked
+                                  }
+                                })}
+                                className="rounded"
+                              />
+                              Incluir todas as variáveis coletadas
+                            </label>
+                          </div>
+
+                          {/* Body Fields - SEÇÃO CUSTOMIZÁVEL */}
+                          <div className="space-y-2 bg-blue-50 p-3 rounded border-2 border-blue-200">
+                            <div className="flex items-center justify-between">
+                              <label className="text-sm font-bold text-blue-900">📦 Campos do Body</label>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  console.log('Adicionando campo do body');
+                                  const bodyFields = (stepContent as ButtonStep).webhook?.bodyFields || [];
+                                  updateStepContent({
+                                    webhook: {
+                                      ...(stepContent as ButtonStep).webhook,
+                                      bodyFields: [...bodyFields, { key: '', value: '', type: 'static' }]
+                                    }
+                                  });
+                                }}
+                                className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 shadow"
+                              >
+                                ➕ Adicionar Campo
+                              </button>
+                            </div>
+                            {((stepContent as ButtonStep).webhook?.bodyFields || []).length === 0 && (
+                              <p className="text-sm text-blue-600 italic">
+                                Nenhum campo personalizado. Click em &quot;+ Adicionar Campo&quot; para customizar o body.
+                              </p>
+                            )}
+                            {((stepContent as ButtonStep).webhook?.bodyFields || []).map((field: { key: string; value: string; type: 'static' | 'variable'; variableName?: string }, index: number) => (
+                              <div key={index} className="flex flex-col gap-2 bg-white p-2 rounded border">
+                                <div className="flex gap-2 w-full">
+                                  <input
+                                    value={field.key}
+                                    onChange={(e) => {
+                                      const bodyFields = [...((stepContent as ButtonStep).webhook?.bodyFields || [])];
+                                      bodyFields[index] = { ...bodyFields[index], key: e.target.value };
+                                      updateStepContent({
+                                        webhook: {
+                                          ...(stepContent as ButtonStep).webhook,
+                                          bodyFields
+                                        }
+                                      });
+                                    }}
+                                    className="flex-1 min-w-0 p-2 border rounded text-sm"
+                                    placeholder="chave"
+                                  />
+                                  <select
+                                    value={field.type}
+                                    onChange={(e) => {
+                                      const bodyFields = [...((stepContent as ButtonStep).webhook?.bodyFields || [])];
+                                      bodyFields[index] = { 
+                                        ...bodyFields[index], 
+                                        type: e.target.value as 'static' | 'variable',
+                                        value: e.target.value === 'static' ? '' : `{{variavel}}`
+                                      };
+                                      updateStepContent({
+                                        webhook: {
+                                          ...(stepContent as ButtonStep).webhook,
+                                          bodyFields
+                                        }
+                                      });
+                                    }}
+                                    className="w-24 p-2 border rounded text-sm shrink-0"
+                                  >
+                                    <option value="static">Fixo</option>
+                                    <option value="variable">Variável</option>
+                                  </select>
+                                </div>
+                                {field.type === 'static' ? (
+                                  <input
+                                    value={field.value}
+                                    onChange={(e) => {
+                                      const bodyFields = [...((stepContent as ButtonStep).webhook?.bodyFields || [])];
+                                      bodyFields[index] = { ...bodyFields[index], value: e.target.value };
+                                      updateStepContent({
+                                        webhook: {
+                                          ...(stepContent as ButtonStep).webhook,
+                                          bodyFields
+                                        }
+                                      });
+                                    }}
+                                    className="w-full p-2 border rounded text-sm"
+                                    placeholder="valor"
+                                  />
+                                ) : (
+                                  <div className="flex gap-2 w-full">
+                                    <select
+                                      value={field.variableName || ''}
+                                      onChange={(e) => {
+                                        const bodyFields = [...((stepContent as ButtonStep).webhook?.bodyFields || [])];
+                                        const varName = e.target.value;
+                                        bodyFields[index] = { 
+                                          ...bodyFields[index], 
+                                          value: `{{${varName}}}`,
+                                          variableName: varName
+                                        };
+                                        updateStepContent({
+                                          webhook: {
+                                            ...(stepContent as ButtonStep).webhook,
+                                            bodyFields
+                                          }
+                                        });
+                                      }}
+                                      className="flex-1 min-w-0 p-2 border rounded text-sm bg-blue-50 font-mono"
+                                    >
+                                      <option value="">Selecione uma variável...</option>
+                                      {getAvailableVariables().map((variable) => (
+                                        <option key={variable.name} value={variable.name}>
+                                          Step {variable.stepIndex + 1}: {variable.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <input
+                                      value={field.value}
+                                      onChange={(e) => {
+                                        const bodyFields = [...((stepContent as ButtonStep).webhook?.bodyFields || [])];
+                                        const newValue = e.target.value;
+                                        bodyFields[index] = { ...bodyFields[index], value: newValue };
+                                        const match = newValue.match(/^\{\{([^}]+)\}\}$/);
+                                        if (match) {
+                                          bodyFields[index].variableName = match[1];
+                                        }
+                                        updateStepContent({
+                                          webhook: {
+                                            ...(stepContent as ButtonStep).webhook,
+                                            bodyFields
+                                          }
+                                        });
+                                      }}
+                                      className="flex-1 min-w-0 p-2 border rounded text-sm font-mono bg-blue-50"
+                                      placeholder="{{var}}"
+                                    />
+                                  </div>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    const bodyFields = [...((stepContent as ButtonStep).webhook?.bodyFields || [])];
+                                    bodyFields.splice(index, 1);
+                                    updateStepContent({
+                                      webhook: {
+                                        ...(stepContent as ButtonStep).webhook,
+                                        bodyFields
+                                      }
+                                    });
+                                  }}
+                                  className="px-2 py-2 text-red-600 hover:bg-red-50 rounded"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Headers */}
                           <div className="space-y-2">
-                            <label className="text-xs font-medium text-gray-600">Headers</label>
+                            <label className="text-sm font-medium text-gray-700">Headers</label>
                             {Object.entries((stepContent as ButtonStep).webhook?.headers || {}).map(([key, value], index) => (
                               <div key={index} className="flex gap-2">
                                 <input
@@ -2355,7 +2540,7 @@ export default function ConfigInnguestPage() {
                                       }
                                     });
                                   }}
-                                  className="flex-1 p-2 border rounded"
+                                  className="flex-1 p-2 border rounded text-sm"
                                   placeholder="Header Key"
                                 />
                                 <input
@@ -2370,7 +2555,7 @@ export default function ConfigInnguestPage() {
                                       }
                                     });
                                   }}
-                                  className="flex-1 p-2 border rounded"
+                                  className="flex-1 p-2 border rounded text-sm"
                                   placeholder="Header Value"
                                 />
                                 <button
@@ -2450,6 +2635,17 @@ export default function ConfigInnguestPage() {
                       <option value="tel">Telefone</option>
                       <option value="textarea">Textarea</option>
                     </select>
+                    {(stepContent as InputStep).inputType === 'tel' && (
+                      <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded">
+                        <p className="text-xs text-blue-900 font-medium mb-1">📱 Máscara automática de telefone</p>
+                        <p className="text-xs text-blue-700">
+                          O usuário pode digitar apenas números e a máscara será aplicada automaticamente no formato brasileiro:
+                        </p>
+                        <code className="text-xs text-blue-800 block mt-1 font-mono">
+                          +55 (11) 91234-5678
+                        </code>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Nome da Variável (opcional)</label>
@@ -2481,13 +2677,13 @@ export default function ConfigInnguestPage() {
                     </p>
                   </div>
 
-                  {/* Webhook Config for Input */}
+                  {/* Webhook Config for Input - ADVANCED */}
                   <div className="border-t pt-3">
                     <label className="block text-sm font-medium mb-1">
                       <Webhook className="inline-block w-4 h-4 mr-1" />
                       Webhook (opcional)
                     </label>
-                    <div className="space-y-2">
+                    <div className="space-y-3 overflow-x-hidden">
                       <input
                         value={(stepContent as InputStep).webhook?.url || ''}
                         onChange={(e) => updateStepContent({
@@ -2496,7 +2692,7 @@ export default function ConfigInnguestPage() {
                             url: e.target.value
                           }
                         })}
-                        className="w-full p-2 border rounded"
+                        className="w-full p-2 border rounded text-sm"
                         placeholder="https://exemplo.com/webhook"
                       />
                       {(stepContent as InputStep).webhook?.url && (
@@ -2509,7 +2705,7 @@ export default function ConfigInnguestPage() {
                                 method: e.target.value as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
                               }
                             })}
-                            className="w-full p-2 border rounded"
+                            className="w-full p-2 border rounded text-sm"
                           >
                             <option value="GET">GET</option>
                             <option value="POST">POST</option>
@@ -2517,10 +2713,189 @@ export default function ConfigInnguestPage() {
                             <option value="PATCH">PATCH</option>
                             <option value="DELETE">DELETE</option>
                           </select>
+
+                          {/* Options */}
+                          <div className="bg-gray-50 p-3 rounded space-y-2">
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={(stepContent as InputStep).webhook?.includeSessionData !== false}
+                                onChange={(e) => updateStepContent({
+                                  webhook: {
+                                    ...(stepContent as InputStep).webhook,
+                                    includeSessionData: e.target.checked
+                                  }
+                                })}
+                                className="rounded"
+                              />
+                              Incluir dados da sessão
+                            </label>
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={(stepContent as InputStep).webhook?.includeAllVariables || false}
+                                onChange={(e) => updateStepContent({
+                                  webhook: {
+                                    ...(stepContent as InputStep).webhook,
+                                    includeAllVariables: e.target.checked
+                                  }
+                                })}
+                                className="rounded"
+                              />
+                              Incluir todas as variáveis
+                            </label>
+                          </div>
+
+                          {/* Body Fields */}
                           <div className="space-y-2">
-                            <label className="text-xs font-medium text-gray-600">Headers</label>
+                            <div className="flex items-center justify-between">
+                              <label className="text-sm font-medium text-gray-700">Campos do Body</label>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const bodyFields = (stepContent as InputStep).webhook?.bodyFields || [];
+                                  updateStepContent({
+                                    webhook: {
+                                      ...(stepContent as InputStep).webhook,
+                                      bodyFields: [...bodyFields, { key: '', value: '', type: 'static' }]
+                                    }
+                                  });
+                                }}
+                                className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 whitespace-nowrap"
+                              >
+                                + Campo
+                              </button>
+                            </div>
+                            {((stepContent as InputStep).webhook?.bodyFields || []).map((field: { key: string; value: string; type: 'static' | 'variable'; variableName?: string }, index: number) => (
+                              <div key={index} className="flex flex-col gap-2 bg-white p-2 rounded border">
+                                <div className="flex gap-2 w-full">
+                                  <input
+                                    value={field.key}
+                                    onChange={(e) => {
+                                      const bodyFields = [...((stepContent as InputStep).webhook?.bodyFields || [])];
+                                      bodyFields[index] = { ...bodyFields[index], key: e.target.value };
+                                      updateStepContent({
+                                        webhook: {
+                                          ...(stepContent as InputStep).webhook,
+                                          bodyFields
+                                        }
+                                      });
+                                    }}
+                                    className="flex-1 min-w-0 p-2 border rounded text-sm"
+                                    placeholder="chave"
+                                  />
+                                  <select
+                                    value={field.type}
+                                    onChange={(e) => {
+                                      const bodyFields = [...((stepContent as InputStep).webhook?.bodyFields || [])];
+                                      bodyFields[index] = { 
+                                        ...bodyFields[index], 
+                                        type: e.target.value as 'static' | 'variable',
+                                        value: e.target.value === 'static' ? '' : `{{variavel}}`
+                                      };
+                                      updateStepContent({
+                                        webhook: {
+                                          ...(stepContent as InputStep).webhook,
+                                          bodyFields
+                                        }
+                                      });
+                                    }}
+                                    className="w-24 p-2 border rounded text-sm shrink-0"
+                                  >
+                                    <option value="static">Fixo</option>
+                                    <option value="variable">Variável</option>
+                                  </select>
+                                </div>
+                                {field.type === 'static' ? (
+                                  <input
+                                    value={field.value}
+                                    onChange={(e) => {
+                                      const bodyFields = [...((stepContent as InputStep).webhook?.bodyFields || [])];
+                                      bodyFields[index] = { ...bodyFields[index], value: e.target.value };
+                                      updateStepContent({
+                                        webhook: {
+                                          ...(stepContent as InputStep).webhook,
+                                          bodyFields
+                                        }
+                                      });
+                                    }}
+                                    className="w-full p-2 border rounded text-sm"
+                                    placeholder="valor"
+                                  />
+                                ) : (
+                                  <div className="flex gap-2 w-full">
+                                    <select
+                                      value={field.variableName || ''}
+                                      onChange={(e) => {
+                                        const bodyFields = [...((stepContent as InputStep).webhook?.bodyFields || [])];
+                                        const varName = e.target.value;
+                                        bodyFields[index] = { 
+                                          ...bodyFields[index], 
+                                          value: `{{${varName}}}`,
+                                          variableName: varName
+                                        };
+                                        updateStepContent({
+                                          webhook: {
+                                            ...(stepContent as InputStep).webhook,
+                                            bodyFields
+                                          }
+                                        });
+                                      }}
+                                      className="flex-1 min-w-0 p-2 border rounded text-sm bg-blue-50 font-mono"
+                                    >
+                                      <option value="">Selecione uma variável...</option>
+                                      {getAvailableVariables().map((variable) => (
+                                        <option key={variable.name} value={variable.name}>
+                                          Step {variable.stepIndex + 1}: {variable.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <input
+                                      value={field.value}
+                                      onChange={(e) => {
+                                        const bodyFields = [...((stepContent as InputStep).webhook?.bodyFields || [])];
+                                        const newValue = e.target.value;
+                                        bodyFields[index] = { ...bodyFields[index], value: newValue };
+                                        const match = newValue.match(/^\{\{([^}]+)\}\}$/);
+                                        if (match) {
+                                          bodyFields[index].variableName = match[1];
+                                        }
+                                        updateStepContent({
+                                          webhook: {
+                                            ...(stepContent as InputStep).webhook,
+                                            bodyFields
+                                          }
+                                        });
+                                      }}
+                                      className="flex-1 min-w-0 p-2 border rounded text-sm font-mono bg-blue-50"
+                                      placeholder="{{var}}"
+                                    />
+                                  </div>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    const bodyFields = [...((stepContent as InputStep).webhook?.bodyFields || [])];
+                                    bodyFields.splice(index, 1);
+                                    updateStepContent({
+                                      webhook: {
+                                        ...(stepContent as InputStep).webhook,
+                                        bodyFields
+                                      }
+                                    });
+                                  }}
+                                  className="px-2 py-2 text-red-600 hover:bg-red-50 rounded"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Headers */}
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium text-gray-700">Headers</label>
                             {Object.entries((stepContent as InputStep).webhook?.headers || {}).map(([key, value], index) => (
-                              <div key={index} className="flex gap-2">
+                              <div key={index} className="flex flex-col sm:flex-row gap-2">
                                 <input
                                   value={key}
                                   onChange={(e) => {
@@ -2534,8 +2909,8 @@ export default function ConfigInnguestPage() {
                                       }
                                     });
                                   }}
-                                  className="flex-1 p-2 border rounded"
-                                  placeholder="Header Key"
+                                  className="flex-1 min-w-0 p-2 border rounded text-sm"
+                                  placeholder="Key"
                                 />
                                 <input
                                   value={value}
@@ -2549,8 +2924,8 @@ export default function ConfigInnguestPage() {
                                       }
                                     });
                                   }}
-                                  className="flex-1 p-2 border rounded"
-                                  placeholder="Header Value"
+                                  className="flex-1 min-w-0 p-2 border rounded text-sm"
+                                  placeholder="Value"
                                 />
                                 <button
                                   onClick={() => {
@@ -2582,7 +2957,7 @@ export default function ConfigInnguestPage() {
                               }}
                               className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded"
                             >
-                              + Adicionar Header
+                              + Header
                             </button>
                           </div>
                         </>
@@ -2639,12 +3014,12 @@ export default function ConfigInnguestPage() {
                   </div>
 
                   {/* Webhook Config for Options */}
-                  <div className="border-t pt-3">
+                  <div className="border-t pt-3 overflow-x-hidden">
                     <label className="block text-sm font-medium mb-1">
                       <Webhook className="inline-block w-4 h-4 mr-1" />
                       Webhook (opcional)
                     </label>
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       <input
                         value={(stepContent as OptionsStep).webhook?.url || ''}
                         onChange={(e) => updateStepContent({
@@ -2666,7 +3041,7 @@ export default function ConfigInnguestPage() {
                                 method: e.target.value as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
                               }
                             })}
-                            className="w-full p-2 border rounded"
+                            className="w-full p-2 border rounded text-sm"
                           >
                             <option value="GET">GET</option>
                             <option value="POST">POST</option>
@@ -2674,10 +3049,186 @@ export default function ConfigInnguestPage() {
                             <option value="PATCH">PATCH</option>
                             <option value="DELETE">DELETE</option>
                           </select>
+
+                          {/* Checkboxes de opcoes */}
+                          <div className="space-y-2 bg-blue-50 p-3 rounded border border-blue-200">
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={(stepContent as OptionsStep).webhook?.includeSessionData !== false}
+                                onChange={(e) => updateStepContent({
+                                  webhook: {
+                                    ...(stepContent as OptionsStep).webhook,
+                                    includeSessionData: e.target.checked
+                                  }
+                                })}
+                              />
+                              <span className="text-gray-700">Incluir dados da sessão</span>
+                            </label>
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={(stepContent as OptionsStep).webhook?.includeAllVariables || false}
+                                onChange={(e) => updateStepContent({
+                                  webhook: {
+                                    ...(stepContent as OptionsStep).webhook,
+                                    includeAllVariables: e.target.checked
+                                  }
+                                })}
+                              />
+                              <span className="text-gray-700">Incluir todas as variáveis</span>
+                            </label>
+                          </div>
+
+                          {/* Campos do Body */}
                           <div className="space-y-2">
-                            <label className="text-xs font-medium text-gray-600">Headers</label>
+                            <div className="flex items-center justify-between">
+                              <label className="text-sm font-medium text-gray-700">Campos do Body</label>
+                              <button
+                                onClick={() => {
+                                  const bodyFields = (stepContent as OptionsStep).webhook?.bodyFields || [];
+                                  updateStepContent({
+                                    webhook: {
+                                      ...(stepContent as OptionsStep).webhook,
+                                      bodyFields: [...bodyFields, { key: '', value: '', type: 'static' }]
+                                    }
+                                  });
+                                }}
+                                className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 whitespace-nowrap"
+                              >
+                                + Campo
+                              </button>
+                            </div>
+                            {((stepContent as OptionsStep).webhook?.bodyFields || []).map((field: { key: string; value: string; type: 'static' | 'variable'; variableName?: string }, index: number) => (
+                              <div key={index} className="flex flex-col gap-2 bg-white p-2 rounded border">
+                                <div className="flex gap-2 w-full">
+                                  <input
+                                    value={field.key}
+                                    onChange={(e) => {
+                                      const bodyFields = [...((stepContent as OptionsStep).webhook?.bodyFields || [])];
+                                      bodyFields[index] = { ...bodyFields[index], key: e.target.value };
+                                      updateStepContent({
+                                        webhook: {
+                                          ...(stepContent as OptionsStep).webhook,
+                                          bodyFields
+                                        }
+                                      });
+                                    }}
+                                    className="flex-1 min-w-0 p-2 border rounded text-sm"
+                                    placeholder="chave"
+                                  />
+                                  <select
+                                    value={field.type}
+                                    onChange={(e) => {
+                                      const bodyFields = [...((stepContent as OptionsStep).webhook?.bodyFields || [])];
+                                      bodyFields[index] = { 
+                                        ...bodyFields[index], 
+                                        type: e.target.value as 'static' | 'variable',
+                                        value: e.target.value === 'static' ? '' : `{{variavel}}`
+                                      };
+                                      updateStepContent({
+                                        webhook: {
+                                          ...(stepContent as OptionsStep).webhook,
+                                          bodyFields
+                                        }
+                                      });
+                                    }}
+                                    className="w-24 p-2 border rounded text-sm shrink-0"
+                                  >
+                                    <option value="static">Fixo</option>
+                                    <option value="variable">Variável</option>
+                                  </select>
+                                </div>
+                                {field.type === 'static' ? (
+                                  <input
+                                    value={field.value}
+                                    onChange={(e) => {
+                                      const bodyFields = [...((stepContent as OptionsStep).webhook?.bodyFields || [])];
+                                      bodyFields[index] = { ...bodyFields[index], value: e.target.value };
+                                      updateStepContent({
+                                        webhook: {
+                                          ...(stepContent as OptionsStep).webhook,
+                                          bodyFields
+                                        }
+                                      });
+                                    }}
+                                    className="w-full p-2 border rounded text-sm"
+                                    placeholder="valor"
+                                  />
+                                ) : (
+                                  <div className="flex gap-2 w-full">
+                                    <select
+                                      value={field.variableName || ''}
+                                      onChange={(e) => {
+                                        const bodyFields = [...((stepContent as OptionsStep).webhook?.bodyFields || [])];
+                                        const varName = e.target.value;
+                                        bodyFields[index] = { 
+                                          ...bodyFields[index], 
+                                          value: `{{${varName}}}`,
+                                          variableName: varName
+                                        };
+                                        updateStepContent({
+                                          webhook: {
+                                            ...(stepContent as OptionsStep).webhook,
+                                            bodyFields
+                                          }
+                                        });
+                                      }}
+                                      className="flex-1 min-w-0 p-2 border rounded text-sm bg-blue-50 font-mono"
+                                    >
+                                      <option value="">Selecione uma variável...</option>
+                                      {getAvailableVariables().map((variable) => (
+                                        <option key={variable.name} value={variable.name}>
+                                          Step {variable.stepIndex + 1}: {variable.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <input
+                                      value={field.value}
+                                      onChange={(e) => {
+                                        const bodyFields = [...((stepContent as OptionsStep).webhook?.bodyFields || [])];
+                                        const newValue = e.target.value;
+                                        bodyFields[index] = { ...bodyFields[index], value: newValue };
+                                        const match = newValue.match(/^\{\{([^}]+)\}\}$/);
+                                        if (match) {
+                                          bodyFields[index].variableName = match[1];
+                                        }
+                                        updateStepContent({
+                                          webhook: {
+                                            ...(stepContent as OptionsStep).webhook,
+                                            bodyFields
+                                          }
+                                        });
+                                      }}
+                                      className="flex-1 min-w-0 p-2 border rounded text-sm font-mono bg-blue-50"
+                                      placeholder="{{var}}"
+                                    />
+                                  </div>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    const bodyFields = [...((stepContent as OptionsStep).webhook?.bodyFields || [])];
+                                    bodyFields.splice(index, 1);
+                                    updateStepContent({
+                                      webhook: {
+                                        ...(stepContent as OptionsStep).webhook,
+                                        bodyFields
+                                      }
+                                    });
+                                  }}
+                                  className="px-2 py-2 text-red-600 hover:bg-red-50 rounded"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Headers */}
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium text-gray-700">Headers</label>
                             {Object.entries((stepContent as OptionsStep).webhook?.headers || {}).map(([key, value], index) => (
-                              <div key={index} className="flex gap-2">
+                              <div key={index} className="flex flex-col sm:flex-row gap-2">
                                 <input
                                   value={key}
                                   onChange={(e) => {
@@ -2691,7 +3242,7 @@ export default function ConfigInnguestPage() {
                                       }
                                     });
                                   }}
-                                  className="flex-1 p-2 border rounded"
+                                  className="flex-1 min-w-0 p-2 border rounded text-sm"
                                   placeholder="Header Key"
                                 />
                                 <input
@@ -2706,7 +3257,7 @@ export default function ConfigInnguestPage() {
                                       }
                                     });
                                   }}
-                                  className="flex-1 p-2 border rounded"
+                                  className="flex-1 min-w-0 p-2 border rounded text-sm"
                                   placeholder="Header Value"
                                 />
                                 <button
@@ -2720,9 +3271,9 @@ export default function ConfigInnguestPage() {
                                       }
                                     });
                                   }}
-                                  className="px-3 py-2 text-red-600 hover:bg-red-50 rounded"
+                                  className="px-3 py-2 text-red-600 hover:bg-red-50 rounded shrink-0"
                                 >
-                                  X
+                                  <Trash2 className="w-4 h-4" />
                                 </button>
                               </div>
                             ))}
@@ -2739,7 +3290,7 @@ export default function ConfigInnguestPage() {
                               }}
                               className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded"
                             >
-                              + Adicionar Header
+                              + Header
                             </button>
                           </div>
                         </>

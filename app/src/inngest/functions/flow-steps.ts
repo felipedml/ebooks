@@ -7,11 +7,21 @@ export interface TextStep {
   delay?: number;
 }
 
+export interface WebhookBodyField {
+  key: string;
+  value: string;
+  type: 'static' | 'variable';
+  variableName?: string;
+}
+
 export interface WebhookConfig {
   url?: string;
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   headers?: Record<string, string>;
   body?: unknown;
+  bodyFields?: WebhookBodyField[];
+  includeSessionData?: boolean;
+  includeAllVariables?: boolean;
 }
 
 export interface ButtonStep {
@@ -96,45 +106,81 @@ export interface CanvaAIStep {
 
 export type FlowStep = TextStep | ButtonStep | InputStep | OptionsStep | AIStep | AudioStep | CanvaStep | CanvaAIStep;
 
+// Type guards
+function isTextStep(step: FlowStep): step is TextStep {
+  return step.type === 'text';
+}
+
+function isButtonStep(step: FlowStep): step is ButtonStep {
+  return step.type === 'button';
+}
+
+function isInputStep(step: FlowStep): step is InputStep {
+  return step.type === 'input';
+}
+
+function isOptionsStep(step: FlowStep): step is OptionsStep {
+  return step.type === 'options';
+}
+
+function isAIStep(step: FlowStep): step is AIStep {
+  return step.type === 'ai';
+}
+
+function isAudioStep(step: FlowStep): step is AudioStep {
+  return step.type === 'audio';
+}
+
+function isCanvaStep(step: FlowStep): step is CanvaStep {
+  return step.type === 'canva';
+}
+
+function isCanvaAIStep(step: FlowStep): step is CanvaAIStep {
+  return step.type === 'canva_ai';
+}
+
 // Main flow orchestrator
 export const runFlowFn = inngest.createFunction(
   { id: "flow-runner" },
   { event: "flow/start" },
-  async ({ event, step }) => {
-    const { flowId, sessionId, steps } = event.data;
+    async ({ event, step }) => {
+    const { sessionId, steps: flowSteps } = event.data;
     const responses: Record<string, unknown> = {};
     
-    for (const [index, flowStep] of steps.entries()) {
+    for (const [index, flowStep] of (flowSteps || []).entries()) {
       const stepId = `step-${index}`;
       
       switch (flowStep.type) {
         case 'text':
-          // Text steps just need a delay
-          await step.sleep(`${stepId}-delay`, flowStep.delay || 500);
-          
-          // Send update to client
-          await step.sendEvent(`${stepId}-update`, {
-            name: "flow/step.update",
-            data: {
-              sessionId,
-              stepIndex: index,
-              stepType: 'text',
-              content: flowStep.content
-            }
-          });
+          if (isTextStep(flowStep)) {
+            // Text steps just need a delay
+            await step.sleep(`${stepId}-delay`, flowStep.delay || 500);
+            
+            // Send update to client
+            await step.sendEvent(`${stepId}-update`, {
+              name: "flow/step.update",
+              data: {
+                sessionId,
+                stepIndex: index,
+                stepType: 'text',
+                content: flowStep.content
+              }
+            });
+          }
           break;
           
         case 'button':
-          // Send buttons to client
-          await step.sendEvent(`${stepId}-buttons`, {
-            name: "flow/step.update", 
-            data: {
-              sessionId,
-              stepIndex: index,
-              stepType: 'button',
-              buttons: flowStep.buttons
-            }
-          });
+          if (isButtonStep(flowStep)) {
+            // Send buttons to client
+            await step.sendEvent(`${stepId}-buttons`, {
+              name: "flow/step.update", 
+              data: {
+                sessionId,
+                stepIndex: index,
+                stepType: 'button',
+                buttons: flowStep.buttons
+              }
+            });
           
           // Wait for user selection
           const buttonEvent = await step.waitForEvent(
@@ -146,23 +192,25 @@ export const runFlowFn = inngest.createFunction(
             }
           );
           
-          if (buttonEvent) {
-            responses[stepId] = buttonEvent.data.selectedValue;
+            if (buttonEvent) {
+              responses[stepId] = buttonEvent.data.selectedValue;
+            }
           }
           break;
           
         case 'input':
-          // Send input request to client
-          await step.sendEvent(`${stepId}-input`, {
-            name: "flow/step.update",
-            data: {
-              sessionId,
-              stepIndex: index,
-              stepType: 'input',
-              placeholder: flowStep.placeholder,
-              inputType: flowStep.inputType
-            }
-          });
+          if (isInputStep(flowStep)) {
+            // Send input request to client
+            await step.sendEvent(`${stepId}-input`, {
+              name: "flow/step.update",
+              data: {
+                sessionId,
+                stepIndex: index,
+                stepType: 'input',
+                placeholder: flowStep.placeholder,
+                inputType: flowStep.inputType
+              }
+            });
           
           // Wait for user input
           const inputEvent = await step.waitForEvent(
@@ -174,26 +222,28 @@ export const runFlowFn = inngest.createFunction(
             }
           );
           
-          if (inputEvent) {
-            responses[stepId] = inputEvent.data.value;
-            // Store with variable name if provided
-            if (flowStep.variable) {
-              responses[flowStep.variable] = inputEvent.data.value;
+            if (inputEvent) {
+              responses[stepId] = inputEvent.data.value;
+              // Store with variable name if provided
+              if (flowStep.variable) {
+                responses[flowStep.variable] = inputEvent.data.value;
+              }
             }
           }
           break;
 
         case 'options':
-          // Send options to client
-          await step.sendEvent(`${stepId}-options`, {
-            name: "flow/step.update",
-            data: {
-              sessionId,
-              stepIndex: index,
-              stepType: 'options',
-              options: flowStep.options
-            }
-          });
+          if (isOptionsStep(flowStep)) {
+            // Send options to client
+            await step.sendEvent(`${stepId}-options`, {
+              name: "flow/step.update",
+              data: {
+                sessionId,
+                stepIndex: index,
+                stepType: 'options',
+                options: flowStep.options
+              }
+            });
           
           // Wait for user selection
           const optionEvent = await step.waitForEvent(
@@ -205,119 +255,121 @@ export const runFlowFn = inngest.createFunction(
             }
           );
           
-          if (optionEvent) {
-            responses[stepId] = optionEvent.data.selectedOption;
+            if (optionEvent) {
+              responses[stepId] = optionEvent.data.selectedOption;
+            }
           }
           break;
 
         case 'ai':
-          // Process AI step
-          const aiResult = await step.run(`${stepId}-ai-process`, async () => {
-            const { processAIStep } = await import('@/lib/ai-processor');
-            
-            return processAIStep({
-              provider: flowStep.provider,
-              apiKeyId: flowStep.apiKeyId,
-              model: flowStep.model,
-              prompt: flowStep.prompt,
-              outputType: flowStep.outputType,
-              variables: responses,
-              temperature: flowStep.temperature,
-              maxTokens: flowStep.maxTokens,
+          if (isAIStep(flowStep)) {
+            // Process AI step
+            const aiResult = await step.run(`${stepId}-ai-process`, async () => {
+              const { processAIStep } = await import('@/lib/ai-processor');
+              
+              return processAIStep({
+                provider: flowStep.provider,
+                apiKeyId: flowStep.apiKeyId,
+                model: flowStep.model,
+                prompt: flowStep.prompt,
+                outputType: flowStep.outputType,
+                variables: responses,
+                temperature: flowStep.temperature,
+              });
             });
-          });
 
-          // Send AI-generated content based on output type
-          if (aiResult.type === 'text') {
-            await step.sendEvent(`${stepId}-update`, {
-              name: "flow/step.update",
-              data: {
-                sessionId,
-                stepIndex: index,
-                stepType: 'text',
-                content: aiResult.content
+            // Send AI-generated content based on output type
+            if (aiResult.type === 'text' && 'content' in aiResult) {
+              await step.sendEvent(`${stepId}-update`, {
+                name: "flow/step.update",
+                data: {
+                  sessionId,
+                  stepIndex: index,
+                  stepType: 'text',
+                  content: aiResult.content
+                }
+              });
+            } else if (aiResult.type === 'buttons' && 'buttons' in aiResult) {
+              await step.sendEvent(`${stepId}-buttons`, {
+                name: "flow/step.update",
+                data: {
+                  sessionId,
+                  stepIndex: index,
+                  stepType: 'button',
+                  buttons: aiResult.buttons
+                }
+              });
+              
+              // Wait for user selection
+              const aiButtonEvent = await step.waitForEvent(
+                `${stepId}-wait`,
+                {
+                  event: "flow/button.selected",
+                  timeout: "5m",
+                  if: `async.data.sessionId == '${sessionId}' && async.data.stepIndex == ${index}`
+                }
+              );
+              
+              if (aiButtonEvent) {
+                responses[stepId] = aiButtonEvent.data.selectedValue;
               }
-            });
-          } else if (aiResult.type === 'buttons') {
-            await step.sendEvent(`${stepId}-buttons`, {
-              name: "flow/step.update",
-              data: {
-                sessionId,
-                stepIndex: index,
-                stepType: 'button',
-                buttons: aiResult.buttons
+            } else if (aiResult.type === 'input' && 'placeholder' in aiResult) {
+              await step.sendEvent(`${stepId}-input`, {
+                name: "flow/step.update",
+                data: {
+                  sessionId,
+                  stepIndex: index,
+                  stepType: 'input',
+                  placeholder: aiResult.placeholder,
+                  inputType: aiResult.inputType
+                }
+              });
+              
+              // Wait for user input
+              const aiInputEvent = await step.waitForEvent(
+                `${stepId}-wait`,
+                {
+                  event: "flow/input.submitted",
+                  timeout: "5m",
+                  if: `async.data.sessionId == '${sessionId}' && async.data.stepIndex == ${index}`
+                }
+              );
+              
+              if (aiInputEvent) {
+                responses[stepId] = aiInputEvent.data.value;
+                if ('variable' in aiResult && aiResult.variable) {
+                  responses[aiResult.variable] = aiInputEvent.data.value;
+                }
               }
-            });
-            
-            // Wait for user selection
-            const aiButtonEvent = await step.waitForEvent(
-              `${stepId}-wait`,
-              {
-                event: "flow/button.selected",
-                timeout: "5m",
-                if: `async.data.sessionId == '${sessionId}' && async.data.stepIndex == ${index}`
+            } else if (aiResult.type === 'options' && 'options' in aiResult) {
+              await step.sendEvent(`${stepId}-options`, {
+                name: "flow/step.update",
+                data: {
+                  sessionId,
+                  stepIndex: index,
+                  stepType: 'options',
+                  options: aiResult.options
+                }
+              });
+              
+              // Wait for user selection
+              const aiOptionEvent = await step.waitForEvent(
+                `${stepId}-wait`,
+                {
+                  event: "flow/option.selected",
+                  timeout: "5m",
+                  if: `async.data.sessionId == '${sessionId}' && async.data.stepIndex == ${index}`
+                }
+              );
+              
+              if (aiOptionEvent) {
+                responses[stepId] = aiOptionEvent.data.selectedOption;
               }
-            );
-            
-            if (aiButtonEvent) {
-              responses[stepId] = aiButtonEvent.data.selectedValue;
             }
-          } else if (aiResult.type === 'input') {
-            await step.sendEvent(`${stepId}-input`, {
-              name: "flow/step.update",
-              data: {
-                sessionId,
-                stepIndex: index,
-                stepType: 'input',
-                placeholder: aiResult.placeholder,
-                inputType: aiResult.inputType
-              }
-            });
             
-            // Wait for user input
-            const aiInputEvent = await step.waitForEvent(
-              `${stepId}-wait`,
-              {
-                event: "flow/input.submitted",
-                timeout: "5m",
-                if: `async.data.sessionId == '${sessionId}' && async.data.stepIndex == ${index}`
-              }
-            );
-            
-            if (aiInputEvent) {
-              responses[stepId] = aiInputEvent.data.value;
-              if (aiResult.variable) {
-                responses[aiResult.variable] = aiInputEvent.data.value;
-              }
-            }
-          } else if (aiResult.type === 'options') {
-            await step.sendEvent(`${stepId}-options`, {
-              name: "flow/step.update",
-              data: {
-                sessionId,
-                stepIndex: index,
-                stepType: 'options',
-                options: aiResult.options
-              }
-            });
-            
-            // Wait for user selection
-            const aiOptionEvent = await step.waitForEvent(
-              `${stepId}-wait`,
-              {
-                event: "flow/option.selected",
-                timeout: "5m",
-                if: `async.data.sessionId == '${sessionId}' && async.data.stepIndex == ${index}`
-              }
-            );
-            
-            if (aiOptionEvent) {
-              responses[stepId] = aiOptionEvent.data.selectedOption;
-            }
+            // Store AI result
+            responses[`${stepId}_ai_result`] = aiResult;
           }
-          
-          // Store AI result
-          responses[`${stepId}_ai_result`] = aiResult;
           break;
 
         case 'audio':
