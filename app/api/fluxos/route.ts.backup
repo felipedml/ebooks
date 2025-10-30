@@ -150,6 +150,7 @@ export async function PUT(request: NextRequest) {
     );
 
   } catch (error) {
+    } catch (error) {
     console.error('[API] Erro ao atualizar fluxo:', error);
     return corsResponse(
       { 
@@ -216,6 +217,44 @@ export async function DELETE(request: NextRequest) {
         stack: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.stack : undefined) : undefined
       },
       { status: 500, origin }
+    );
+  }
+}
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const url = new URL(request.url);
+    const id = url.searchParams.get('id');
+    
+    if (!id) {
+      return NextResponse.json(
+        { error: 'ID é obrigatório' },
+        { status: 400 }
+      );
+    }
+
+    // Deletar steps primeiro (CASCADE deveria fazer isso automaticamente, mas vamos garantir)
+    await db.delete(steps).where(eq(steps.fluxoId, parseInt(id)));
+    
+    // Deletar fluxo
+    const resultado = await db.delete(fluxos).where(eq(fluxos.id, parseInt(id)));
+
+    return NextResponse.json({ 
+      success: true,
+      message: 'Fluxo deletado com sucesso!' 
+    });
+
+  } catch (error) {
+    console.error('Erro ao deletar fluxo:', error);
+    return NextResponse.json(
+      { 
+        error: 'Erro interno do servidor ao deletar fluxo',
+        details: error instanceof Error ? error.message : String(error),
+        stack: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.stack : undefined) : undefined
+      },
+      { status: 500 }
     );
   }
 }

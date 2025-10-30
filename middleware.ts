@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { getCorsHeaders } from './lib/cors';
 
 // Routes that require authentication
 const PROTECTED_ROUTES = ['/', '/config', '/admin'];
@@ -9,10 +10,26 @@ const PUBLIC_ROUTES = ['/login', '/flow'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const origin = request.headers.get('origin');
 
-  // Allow API routes
+  // Handle CORS preflight for API routes
+  if (request.method === 'OPTIONS' && pathname.startsWith('/api')) {
+    return new NextResponse(null, {
+      status: 204,
+      headers: getCorsHeaders(origin),
+    });
+  }
+
+  // Allow API routes with CORS headers
   if (pathname.startsWith('/api')) {
-    return NextResponse.next();
+    const response = NextResponse.next();
+    const corsHeaders = getCorsHeaders(origin);
+    
+    Object.entries(corsHeaders).forEach(([key, value]) => {
+      response.headers.set(key, value);
+    });
+    
+    return response;
   }
 
   // Allow public static files
